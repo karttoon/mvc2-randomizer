@@ -259,6 +259,10 @@ The `--gallery-download` command creates these folders automatically. If adding 
 
 Place indexed PNG sprite sheets in the appropriate character folder. Skin PNGs must be **indexed color** (palette mode) with 16 colors per palette row. The first 16 palette entries are the body colors. Multi-row characters (like Spiral or Sentinel) use additional palette rows for accessories.
 
+## Run Log
+
+After each run, the tool saves a `last_run.txt` file listing every skin that was assigned. If you see a palette you like in-game and want to know which skin file it was, check this file. You can then copy the filename into `skin_locks.txt` to lock it in for future runs.
+
 ## Backup & Restore
 
 The tool automatically backs up `game_50.arc` before the first modification. The backup is stored next to the game file as `game_50.arc.bak`.
