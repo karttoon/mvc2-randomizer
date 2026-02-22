@@ -41,6 +41,7 @@ from mvc2_data.steam import (
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "randomizer_config.json")
 DEFAULT_SKINS = os.path.join(SCRIPT_DIR, "skins")
+LAST_RUN_LOG = os.path.join(SCRIPT_DIR, "last_run.txt")
 ARC_FILENAME = "game_50.arc"
 ARC_SUBPATH = os.path.join("arc", "pc", ARC_FILENAME)
 BACKUP_SUFFIX = ".bak"
@@ -542,6 +543,7 @@ def main():
 
     total_assigned = 0
     total_locked = 0
+    run_log = []  # collected for last_run.txt
 
     for cid in PLAYABLE_CHARS:
         char_name = CHARACTERS[cid]
@@ -615,8 +617,11 @@ def main():
 
         if btn_log:
             print(f"{char_name}")
+            run_log.append(char_name)
             for line in btn_log:
                 print(line)
+                run_log.append(line)
+            run_log.append("")
             total_assigned += 1
 
             # Write body palettes to extras animation frame entries
@@ -636,8 +641,12 @@ def main():
     else:
         print(f"Writing modified archive...")
         write_arc(arc_path, rom)
+        # Save assignment log so user can check what was applied
+        with open(LAST_RUN_LOG, "w") as f:
+            f.write("\n".join(run_log) + "\n")
         print(f"Done! Randomized {total_assigned} characters"
               f" ({total_locked} slots locked)")
+        print(f"Assignments saved to: {LAST_RUN_LOG}")
 
     return 0
 
