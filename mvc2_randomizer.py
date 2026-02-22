@@ -130,8 +130,8 @@ def generate_skin_locks(locks_path):
         "#",
         "",
     ]
-    for cid in PLAYABLE_CHARS:
-        folder = CHAR_ID_TO_FOLDER.get(cid, safe_name(CHARACTERS[cid]))
+    folders = sorted(CHAR_ID_TO_FOLDER.values(), key=str.lower)
+    for folder in folders:
         for btn_name in BUTTON_NAMES:
             lines.append(f"{folder} {btn_name}=null")
         lines.append("")

@@ -10,7 +10,7 @@ REM Edit the paths below to match your setup:
 REM ============================================================
 
 REM Path to Python (find yours with: where python)
-set PYTHON=C:\Users\kartt\AppData\Local\Programs\Python\Python312\python.exe
+set PYTHON=C:\Users\YOU\AppData\Local\Programs\Python\Python312\python.exe
 
 REM Path to the randomizer script
 set RANDOMIZER=%~dp0mvc2_randomizer.py

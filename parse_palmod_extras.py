@@ -11,7 +11,7 @@ import re
 import sys
 from collections import defaultdict
 
-HEADER_PATH = r"D:\Storage\MvC2Modding\PalMod_src\palmod\Game\MVC2_A_DEF.h"
+HEADER_PATH = sys.argv[1] if len(sys.argv) > 1 else "MVC2_A_DEF.h"
 
 # Character ID mapping (from CPS2 unit IDs)
 CHAR_IDS = {
