@@ -95,9 +95,6 @@ python mvc2_randomizer.py [options]
 | `--game PATH` | Game install directory (auto-detected if omitted) |
 | `--config PATH` | Path to config JSON (default: `randomizer_config.json`) |
 | `--character NAME` | Only randomize a specific character |
-| `--bypass NAMES` | Comma-separated character names to skip |
-| `--bypass-buttons SPEC` | Per-character button bypasses (see below) |
-| `--only-defaults` | Only replace palettes that still match game defaults |
 | `--seed N` | Fixed random seed for reproducible results |
 | `--dry-run` | Show what would be assigned without modifying files |
 | `--restore` | Restore `game_50.arc` from backup |
@@ -114,12 +111,6 @@ python mvc2_randomizer.py --skins ./skins
 # Randomize only Storm
 python mvc2_randomizer.py --skins ./skins --character Storm
 
-# Skip Ryu and Akuma
-python mvc2_randomizer.py --skins ./skins --bypass "Ryu,Akuma"
-
-# Keep Storm's LP and A2 at default, randomize the rest
-python mvc2_randomizer.py --skins ./skins --bypass-buttons "Storm:LP,A2"
-
 # Reproducible results with a seed
 python mvc2_randomizer.py --skins ./skins --seed 42
 
@@ -135,18 +126,16 @@ python mvc2_randomizer.py --gallery-download --skins ./skins
 
 ## Configuration
 
-On first run, a `randomizer_config.json` is auto-generated next to the script. CLI flags override config values.
+On first run, two config files are auto-generated next to the script:
+
+### randomizer_config.json
+
+Stores paths and global settings. CLI flags override these values.
 
 ```json
 {
     "skins_path": "C:/path/to/skins",
     "game_path": null,
-    "bypass_characters": ["Ryu", "Storm"],
-    "bypass_buttons": {
-        "Doctor Doom": ["LP"],
-        "Magneto": ["HP", "A1"]
-    },
-    "only_defaults": false,
     "seed": null
 }
 ```
@@ -155,39 +144,108 @@ On first run, a `randomizer_config.json` is auto-generated next to the script. C
 |-----|------|-------------|
 | `skins_path` | string/null | Path to skins folder. `null` uses `./skins` next to script. |
 | `game_path` | string/null | Game install directory. `null` uses default Steam path. |
-| `bypass_characters` | list | Characters to never randomize (keep default game palettes). |
-| `bypass_buttons` | object | Per-character button slots to keep at default. Keys are character names, values are lists of button names (`LP`, `LK`, `HP`, `HK`, `A1`, `A2`). |
-| `only_defaults` | bool | Only randomize slots that still have the original game palette. |
 | `seed` | int/null | Fixed seed for reproducible randomization. `null` = random each run. |
 
-### Config Examples
+### skin_locks.txt
 
-**Skip entire characters:**
-```json
-{
-    "bypass_characters": ["Ryu", "Storm", "Cable"]
-}
-```
-These characters keep their default game palettes and are never randomized.
+Controls per-character, per-button skin assignments. Every character and button slot is listed. Set a filename to **lock** that skin to that slot, or leave as `null` to **randomize** it each run.
 
-**Keep specific button slots at default:**
-```json
-{
-    "bypass_buttons": {
-        "Storm": ["LP", "A2"],
-        "Doctor Doom": ["HP"]
-    }
-}
 ```
-Storm's LP and A2 keep default palettes; her other 4 buttons get randomized. Doctor Doom's HP stays default, the rest randomize.
+# Each line is: Character_Name BUTTON=filename.png
+# Set a filename to lock that skin to that button slot.
+# Leave as "null" to randomize that slot each run.
 
-**Reproducible results:**
-```json
-{
-    "seed": 42
-}
+Akuma LP=Akuma_9bc20b73_AccurateMix.png
+Akuma LK=null
+Akuma HP=Akuma_976f5700_Dragonball.png
+Akuma HK=null
+Akuma A1=null
+Akuma A2=null
+
+Storm LP=null
+Storm LK=null
+Storm HP=null
+Storm HK=null
+Storm A1=null
+Storm A2=null
 ```
-Same seed = same skin assignments every run. Useful if you find a combination you like.
+
+In this example:
+- Akuma's LP always uses the AccurateMix skin, HP always uses the Dragonball skin
+- Akuma's other 4 buttons get randomized each run
+- All of Storm's buttons get randomized each run
+
+**Filenames are case-insensitive** — `akuma_9bc20b73_accuratemix.png` and `Akuma_9bc20b73_AccurateMix.PNG` both work. The filename must match a file in that character's skins folder.
+
+## Skins Folder Structure
+
+Skins are organized in folders by character name. **Folder names must match exactly** (underscores for spaces, hyphens preserved where canonical):
+
+```
+skins/
+  Akuma/
+  Amingo/
+  Anakaris/
+  BB_Hood/
+  Blackheart/
+  Cable/
+  Cammy/
+  Captain_America/
+  Captain_Commando/
+  Charlie_Nash/
+  Chun-Li/
+  Colossus/
+  Cyclops/
+  Dan/
+  Dhalsim/
+  Doctor_Doom/
+  Felicia/
+  Gambit/
+  Guile/
+  Hayato/
+  Hulk/
+  Iceman/
+  Iron_Man/
+  Iron_Men/
+  Jill/
+  Jin/
+  Juggernaut/
+  Ken/
+  M_Bison/
+  Magneto/
+  Marrow/
+  Mega_Man/
+  Morrigan/
+  Omega_Red/
+  Psylocke/
+  Rogue/
+  Roll/
+  Ruby_Heart/
+  Ryu/
+  Sabretooth/
+  Sakura/
+  Sentinel/
+  Servbot/
+  Shuma-Gorath/
+  Silver_Samurai/
+  SonSon/
+  Spider-Man/
+  Spiral/
+  Storm/
+  Strider/
+  Thanos/
+  Tron_Bonne/
+  Venom/
+  War_Machine/
+  Wolverine/
+  Wolverine_Bone_Claw/
+  Wolverines/
+  Zangief/
+```
+
+The `--gallery-download` command creates these folders automatically. If adding your own skins, make sure the folder name matches one of the names above.
+
+**Combined folders:** `Iron_Men` contains palettes shared between Iron Man and War Machine. `Wolverines` contains palettes shared between both Wolverine variants. These exist alongside the individual character folders.
 
 ## Gallery Download & Custom Skins
 
@@ -199,19 +257,7 @@ Same seed = same skin assignments every run. Useful if you find a combination yo
 
 ### Adding Your Own Skins
 
-Place indexed PNG sprite sheets in the appropriate character folder:
-
-```
-skins/
-  Ryu/
-    Ryu_abc12345_my-custom.png
-    Ryu_def67890_another.png
-  Storm/
-    Storm_11223344_my-storm.png
-  ...
-```
-
-Skin PNGs must be **indexed color** (palette mode) with 16 colors per palette row. The first 16 palette entries are the body colors. Multi-row characters (like Spiral or Sentinel) use additional palette rows for accessories.
+Place indexed PNG sprite sheets in the appropriate character folder. Skin PNGs must be **indexed color** (palette mode) with 16 colors per palette row. The first 16 palette entries are the body colors. Multi-row characters (like Spiral or Sentinel) use additional palette rows for accessories.
 
 ## Backup & Restore
 
@@ -226,8 +272,8 @@ To fully reset without the tool: use Steam's "Verify integrity of game files" to
 ## How It Works
 
 1. Reads and decompresses `game_50.arc` (MT Framework ARC archive containing the game ROM)
-2. For each character, randomly assigns skin PNGs to the 6 button slots (LP, LK, HP, HK, A1, A2)
-3. Extracts the indexed color palette from each PNG
+2. For each character, checks `skin_locks.txt` — locked slots use the specified skin, unlocked slots get a random skin from the folder
+3. Extracts the indexed color palette from each skin PNG
 4. Writes palette data at the correct ROM offsets (ARGB4444 format, same as PalMod)
 5. Handles per-button super trail slots, animation frame extras (shine, stance, power dive), and multi-row characters
 6. Recompresses and writes the modified ARC back

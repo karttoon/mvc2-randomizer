@@ -68,21 +68,16 @@ CHAR_ID_TO_FOLDER = {v: k for k, v in FOLDER_TO_CHAR_ID.items()}
 DEFAULT_CONFIG_CONTENT = {
     "skins_path": None,
     "game_path": None,
-    "bypass_characters": [],
-    "bypass_buttons": {},
-    "only_defaults": False,
     "seed": None,
 }
 
-# Human-readable descriptions for each config key
 CONFIG_DESCRIPTIONS = {
     "skins_path": "Path to skins folder (null = ./skins next to this script)",
     "game_path": "Game install directory (null = default Steam path)",
-    "bypass_characters": "Character names to never randomize, e.g. [\"Ryu\", \"Storm\"]",
-    "bypass_buttons": "Per-character button bypasses, e.g. {\"Ryu\": [\"LP\", \"HK\"]}",
-    "only_defaults": "If true, only replace palettes that still match game defaults",
     "seed": "Fixed random seed for reproducible results (null = random each run)",
 }
+
+DEFAULT_LOCKS = os.path.join(SCRIPT_DIR, "skin_locks.txt")
 
 
 def generate_default_config(config_path):
@@ -94,8 +89,6 @@ def generate_default_config(config_path):
         val_str = json.dumps(val)
         comma = "," if i < len(keys) - 1 else ""
         desc = CONFIG_DESCRIPTIONS.get(key, "")
-        # JSON doesn't support comments, so we use a _comment key
-        # Use json.dumps for the description to escape any embedded quotes
         lines.append(f'    "_{key}_comment": {json.dumps(desc)},')
         lines.append(f'    "{key}": {val_str}{comma}')
     lines.append("}")
@@ -113,8 +106,73 @@ def load_config(config_path):
         return {}
     with open(config_path, "r") as f:
         data = json.load(f)
-    # Strip _comment keys
     return {k: v for k, v in data.items() if not k.startswith("_")}
+
+
+def generate_skin_locks(locks_path):
+    """Create skin_locks.txt with every character and button set to null."""
+    lines = [
+        "# MvC2 Palette Randomizer - Skin Locks",
+        "#",
+        "# Each line is: Character_Name BUTTON=filename.png",
+        "# Set a filename to lock that skin to that button slot.",
+        "# Leave as \"null\" to randomize that slot each run.",
+        "#",
+        "# Filenames are case-insensitive and matched from the character's",
+        "# skins folder. The character folder names listed here are the exact",
+        "# folder names expected in your skins directory.",
+        "#",
+        "# Example:",
+        "#   Akuma LP=Akuma_abc12345_cool-skin.png",
+        "#   Akuma HP=Akuma_9bc20b73_AccurateMix.png",
+        "#   Storm A1=null",
+        "#",
+        "",
+    ]
+    for cid in PLAYABLE_CHARS:
+        folder = CHAR_ID_TO_FOLDER.get(cid, safe_name(CHARACTERS[cid]))
+        for btn_name in BUTTON_NAMES:
+            lines.append(f"{folder} {btn_name}=null")
+        lines.append("")
+    with open(locks_path, "w") as f:
+        f.write("\n".join(lines))
+
+
+def load_skin_locks(locks_path):
+    """Load skin_locks.txt, creating it if it doesn't exist.
+
+    Returns dict: {(folder_name, button_name): filename_or_none}
+    """
+    if not os.path.isfile(locks_path):
+        generate_skin_locks(locks_path)
+        print(f"Created skin locks: {locks_path}")
+        print("  Edit this file to lock specific skins to button slots.\n")
+
+    locks = {}
+    with open(locks_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Format: "Character_Name BUTTON=value"
+            if "=" not in line:
+                continue
+            left, value = line.split("=", 1)
+            left = left.strip()
+            value = value.strip()
+            # Split "Character_Name BUTTON" on last space
+            parts = left.rsplit(" ", 1)
+            if len(parts) != 2:
+                continue
+            folder, btn = parts
+            btn_upper = btn.upper()
+            if btn_upper not in BUTTON_NAMES:
+                continue
+            if value.lower() == "null" or not value:
+                locks[(folder, btn_upper)] = None
+            else:
+                locks[(folder, btn_upper)] = value
+    return locks
 
 
 def resolve_character(query):
@@ -352,11 +410,6 @@ def build_parser():
     p.add_argument("--game", help="Game install directory (auto-detected if omitted)")
     p.add_argument("--config", default=DEFAULT_CONFIG,
                    help="Path to config JSON (default: randomizer_config.json)")
-    p.add_argument("--bypass", help="Comma-separated character names to skip")
-    p.add_argument("--bypass-buttons",
-                   help="Character:button pairs to skip (e.g. Ryu:LP,HK;Storm:A2)")
-    p.add_argument("--only-defaults", action="store_true",
-                   help="Only replace palettes that still match game defaults")
     p.add_argument("--character", help="Only randomize a specific character")
     p.add_argument("--seed", type=int, help="Random seed for reproducible results")
     p.add_argument("--dry-run", action="store_true",
@@ -368,25 +421,20 @@ def build_parser():
     p.add_argument("--force-backup", action="store_true",
                    help="Recreate backup from current game file (use after reinstall)")
     p.add_argument("--list-characters", action="store_true",
-                   help="List all valid character names for --character/--bypass")
+                   help="List all valid character names")
     return p
 
 
-def parse_bypass_buttons(raw):
-    """Parse --bypass-buttons string into dict.
+def find_skin_file(skin_folder, filename):
+    """Find a skin file by name, case-insensitive.
 
-    Format: "Ryu:LP,HK;Storm:A2" → {"Ryu": ["LP", "HK"], "Storm": ["A2"]}
+    Returns the actual filename on disk, or None if not found.
     """
-    if not raw:
-        return {}
-    result = {}
-    for entry in raw.split(";"):
-        entry = entry.strip()
-        if ":" not in entry:
-            continue
-        char_part, btns_part = entry.split(":", 1)
-        result[char_part.strip()] = [b.strip() for b in btns_part.split(",")]
-    return result
+    target = filename.lower()
+    for f in os.listdir(skin_folder):
+        if f.lower() == target:
+            return f
+    return None
 
 
 def main():
@@ -434,24 +482,14 @@ def main():
         print("Use --skins to specify the path, or --gallery-download to download them")
         return 1
 
+    # Load skin locks (auto-generates skin_locks.txt if missing)
+    locks = load_skin_locks(DEFAULT_LOCKS)
+
     # Set random seed
     seed = args.seed if args.seed is not None else config.get("seed")
     if seed is not None:
         random.seed(seed)
         print(f"Using seed: {seed}")
-
-    # Build bypass lists
-    bypass_chars = set()
-    if args.bypass:
-        bypass_chars = {c.strip() for c in args.bypass.split(",")}
-    bypass_chars.update(config.get("bypass_characters", []))
-
-    bypass_buttons = parse_bypass_buttons(args.bypass_buttons)
-    for char_name, btns in config.get("bypass_buttons", {}).items():
-        if char_name not in bypass_buttons:
-            bypass_buttons[char_name] = btns
-
-    only_defaults = args.only_defaults or config.get("only_defaults", False)
 
     # Resolve --character filter
     char_filter = args.character
@@ -492,8 +530,6 @@ def main():
     print(f"Skins: {skins_dir}")
     if char_filter:
         print(f"Filter: {char_filter}")
-    if bypass_chars:
-        print(f"Bypass: {', '.join(sorted(bypass_chars))}")
     print()
 
     # Read and decompress ROM — always from backup for clean state
@@ -504,34 +540,16 @@ def main():
     else:
         rom = None
 
-    # Save default palettes for --only-defaults comparison
-    default_palettes = {}
-    if only_defaults and not args.dry_run:
-        backup_rom = read_arc(backup_path)
-        for cid in PLAYABLE_CHARS:
-            for btn_idx in range(6):
-                slot_map = palette_slot_map(cid)
-                for row, slot in enumerate(slot_map):
-                    key = (cid, btn_idx, slot)
-                    default_palettes[key] = read_palette(backup_rom, cid, btn_idx, slot)
-        del backup_rom
-
     total_assigned = 0
-    total_skipped = 0
+    total_locked = 0
 
     for cid in PLAYABLE_CHARS:
         char_name = CHARACTERS[cid]
         sname = safe_name(char_name)
         folder_name = CHAR_ID_TO_FOLDER.get(cid, sname)
 
-        # Apply character filter (already resolved to char_id)
-        if char_filter_id is not None:
-            if cid != char_filter_id:
-                continue
-
-        # Check bypass list
-        if char_name in bypass_chars or sname in bypass_chars or folder_name in bypass_chars:
-            total_skipped += 1
+        # Apply character filter
+        if char_filter_id is not None and cid != char_filter_id:
             continue
 
         # Find skins folder
@@ -544,39 +562,56 @@ def main():
         if not pngs:
             continue
 
-        # Assign skins to buttons
-        assignments = assign_skins(pngs)
-        btn_log = []
-
-        for btn_idx, skin_file in enumerate(assignments):
-            btn_name = BUTTON_NAMES[btn_idx]
-
-            # Check button bypass
-            if char_name in bypass_buttons and btn_name in bypass_buttons[char_name]:
-                btn_log.append(f"  {btn_name}: [bypassed]")
-                continue
-            if sname in bypass_buttons and btn_name in bypass_buttons[sname]:
-                btn_log.append(f"  {btn_name}: [bypassed]")
-                continue
-
-            # Check --only-defaults
-            if only_defaults and not args.dry_run:
-                slot_map = palette_slot_map(cid)
-                current = read_palette(rom, cid, btn_idx, slot_map[0])
-                default = default_palettes.get((cid, btn_idx, slot_map[0]))
-                if default and current != default:
-                    btn_log.append(f"  {btn_name}: [already modified, skipped]")
-                    continue
-
-            skin_path = os.path.join(skin_folder, skin_file)
-
-            if args.dry_run:
-                btn_log.append(f"  {btn_name}: {skin_file}")
-            else:
-                if apply_skin(rom, cid, btn_idx, skin_path):
-                    btn_log.append(f"  {btn_name}: {skin_file}")
+        # Check which buttons are locked vs randomizable
+        locked_buttons = {}   # btn_idx → filename
+        random_buttons = []   # btn_idx values to randomize
+        for btn_idx, btn_name in enumerate(BUTTON_NAMES):
+            lock_val = locks.get((folder_name, btn_name))
+            if lock_val is not None:
+                # Locked — find the file case-insensitively
+                actual = find_skin_file(skin_folder, lock_val)
+                if actual:
+                    locked_buttons[btn_idx] = actual
                 else:
-                    btn_log.append(f"  {btn_name}: [failed] {skin_file}")
+                    # Locked file not found — warn and randomize instead
+                    print(f"  Warning: locked skin not found: {lock_val}")
+                    print(f"    ({folder_name}/{lock_val} — will randomize instead)")
+                    random_buttons.append(btn_idx)
+            else:
+                random_buttons.append(btn_idx)
+
+        # Assign random skins to unlocked buttons
+        random_assignments = assign_skins(pngs, len(random_buttons)) if random_buttons else []
+
+        btn_log = []
+        any_applied = False
+
+        for btn_idx, btn_name in enumerate(BUTTON_NAMES):
+            if btn_idx in locked_buttons:
+                skin_file = locked_buttons[btn_idx]
+                skin_path = os.path.join(skin_folder, skin_file)
+                if args.dry_run:
+                    btn_log.append(f"  {btn_name}: {skin_file} [locked]")
+                else:
+                    if apply_skin(rom, cid, btn_idx, skin_path):
+                        btn_log.append(f"  {btn_name}: {skin_file} [locked]")
+                        any_applied = True
+                    else:
+                        btn_log.append(f"  {btn_name}: [failed] {skin_file}")
+                total_locked += 1
+            elif random_buttons and btn_idx in random_buttons:
+                idx = random_buttons.index(btn_idx)
+                if idx < len(random_assignments):
+                    skin_file = random_assignments[idx]
+                    skin_path = os.path.join(skin_folder, skin_file)
+                    if args.dry_run:
+                        btn_log.append(f"  {btn_name}: {skin_file}")
+                    else:
+                        if apply_skin(rom, cid, btn_idx, skin_path):
+                            btn_log.append(f"  {btn_name}: {skin_file}")
+                            any_applied = True
+                        else:
+                            btn_log.append(f"  {btn_name}: [failed] {skin_file}")
 
         if btn_log:
             print(f"{char_name}")
@@ -584,11 +619,8 @@ def main():
                 print(line)
             total_assigned += 1
 
-            # Write body palettes to extras animation frame entries.
-            # Status effects (entries 48-55) are intentionally left untouched:
-            # they're shared across all buttons and contain pre-computed
-            # dark/light transforms for burn/shock/charge visual effects.
-            if not args.dry_run and cid in EXTRAS_BODY_ENTRIES:
+            # Write body palettes to extras animation frame entries
+            if any_applied and not args.dry_run and cid in EXTRAS_BODY_ENTRIES:
                 btn_body_cache = {}
                 for entry_idx, btn_idx in EXTRAS_BODY_ENTRIES[cid]:
                     if btn_idx not in btn_body_cache:
@@ -598,13 +630,14 @@ def main():
     print()
 
     if args.dry_run:
-        print(f"[dry-run] Would randomize {total_assigned} characters")
+        print(f"[dry-run] Would randomize {total_assigned} characters"
+              f" ({total_locked} slots locked)")
         print("No files were modified.")
     else:
         print(f"Writing modified archive...")
         write_arc(arc_path, rom)
         print(f"Done! Randomized {total_assigned} characters"
-              f" ({total_skipped} bypassed)")
+              f" ({total_locked} slots locked)")
 
     return 0
 

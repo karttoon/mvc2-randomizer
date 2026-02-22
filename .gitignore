@@ -1,5 +1,6 @@
 skins/
 randomizer_config.json
+skin_locks.txt
 __pycache__/
 *.pyc
 .env
