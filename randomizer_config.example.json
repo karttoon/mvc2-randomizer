@@ -1,0 +1,19 @@
+{
+    "_skins_path_comment": "Path to skins folder (null = ./skins next to this script)",
+    "skins_path": null,
+
+    "_game_path_comment": "Game install directory (null = default Steam path)",
+    "game_path": null,
+
+    "_bypass_characters_comment": "Character names to never randomize (keep default palettes)",
+    "bypass_characters": [],
+
+    "_bypass_buttons_comment": "Per-character button bypasses (keep default palette for those slots)",
+    "bypass_buttons": {},
+
+    "_only_defaults_comment": "If true, only replace palettes that still match game defaults",
+    "only_defaults": false,
+
+    "_seed_comment": "Fixed random seed for reproducible results (null = random each run)",
+    "seed": null
+}
