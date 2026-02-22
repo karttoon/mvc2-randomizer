@@ -1,4 +1,4 @@
-skins/
+skins/**/*.png
 randomizer_config.json
 skin_locks.txt
 last_run.txt
