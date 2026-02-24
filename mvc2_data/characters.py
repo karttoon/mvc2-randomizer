@@ -76,8 +76,9 @@ PALETTE_SLOT_MAP = {
 # PALETTE_SLOT_MAP. Derived from PalMod's indexCPS2Sprites with sprite index 0.
 # Only characters with non-standard body slots beyond {0, 6, 7} are listed.
 EXTRA_BODY_BUTTON_SLOTS = {
-    0x2F: {1},    # Silver Samurai — slot 1 (Shadow Frame)
-    0x32: {3},    # Colossus — slot 3 (Stance Frame Main Color)
+    0x09: {2},       # Iceman — slot 2 (Stance Frame)
+    0x2F: {1},       # Silver Samurai — slot 1 (Shadow Frame)
+    0x32: {3},       # Colossus — slot 3 (Stance Frame Main Color)
 }
 
 # Extras entries (index 56+) that use the character body sprite, keyed by
@@ -174,12 +175,29 @@ EXTRAS_BODY_ENTRIES = {
         *[(65 + b*10, b) for b in range(6)],
     ],
     0x2A: [  # Storm — Lightning Effect (3 per button, 3-stride; copy/lum+7/lum+17)
+        # Shared super/lightning ball entries (identical to per-button lum variants)
+        (56, None),       # Lightning Storm Frame 1 (body copy, shared)
+        (66, None, 17),   # Lightning Ball/Super Frame 1 (lum+17, shared)
+        (69, None, 7),    # Lightning Ball/Super Frame 4 (lum+7, shared)
+        # Per-button lightning effect entries
         *[(72 + b*3, b) for b in range(6)],
         *[(73 + b*3, b, 7) for b in range(6)],
         *[(74 + b*3, b, 17) for b in range(6)],
     ],
-    0x2D: [  # Shuma-Gorath — Stance (1 per button, 48-stride)
-        (90, 0), (138, 1), (186, 2), (234, 3), (282, 4), (330, 5),
+    0x2D: [  # Shuma-Gorath — body-derived extras (48-stride per button)
+        # Stance after FP: 5 frames per button (SUPP copies colors 2-8)
+        *[(64 + i + b*48, b) for b in range(6) for i in range(5)],
+        # Stone Drop (d+HK): frame 1 copies colors 9-11; frames 2-4 full
+        # body copy + lum 5 (SUPP also applies saturation we can't replicate);
+        # frame 5 is a straight body copy
+        *[(69 + b*48, b) for b in range(6)],
+        *[(70 + i + b*48, b, 5) for b in range(6) for i in range(3)],
+        *[(73 + b*48, b) for b in range(6)],
+        # Unknown 1-4 / HP Flash / Winpose / Unknown 5 (SUPP copies colors 2-8)
+        *[(94 + i + b*48, b) for b in range(6) for i in range(7)],
+        # Chaos Dimension: 5 paired body+dash frames (SUPP copies from body
+        # with sat/lum mods; we write plain body as approximation)
+        *[(101 + i + b*48, b) for b in range(6) for i in range(10)],
     ],
     0x2F: [  # Silver Samurai — Super Armor shine/stance (7 per button, 8-stride; last frame lum -5)
         *[e for b in range(6) for e in [

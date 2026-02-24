@@ -571,7 +571,7 @@ def main():
     total_locked = 0
     run_log = []  # collected for last_run.txt
 
-    for cid in PLAYABLE_CHARS:
+    for cid in sorted(PLAYABLE_CHARS, key=lambda c: CHARACTERS[c]):
         char_name = CHARACTERS[cid]
         sname = safe_name(char_name)
         folder_name = CHAR_ID_TO_FOLDER.get(cid, sname)
