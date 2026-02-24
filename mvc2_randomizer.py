@@ -343,11 +343,25 @@ def do_restore(arc_path):
     return True
 
 
+def load_skip_list():
+    """Load gallery_skip.txt — filenames the user previously rejected."""
+    skip_file = os.path.join(SCRIPT_DIR, "gallery_skip.txt")
+    skips = set()
+    if os.path.isfile(skip_file):
+        with open(skip_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    skips.add(line.lower())
+    return skips
+
+
 def do_gallery_download(skins_dir):
     """Download the skins gallery from GitHub and merge into existing collection.
 
     Only adds new files — existing skins (including user's own custom palettes)
-    are preserved. Safe to run repeatedly to pick up gallery updates.
+    are preserved. Previously rejected skins (in gallery_skip.txt) are skipped.
+    Safe to run repeatedly to pick up gallery updates.
     """
     print("=" * 60)
     print("MvC2 Skins Gallery Download")
@@ -355,6 +369,10 @@ def do_gallery_download(skins_dir):
     print(f"Source: {SKINS_REPO_ZIP}")
     print(f"Output: {skins_dir}")
     print()
+
+    skip_list = load_skip_list()
+    if skip_list:
+        print(f"Skip list: {len(skip_list)} previously rejected skins")
 
     print("Downloading archive (this may take a while)...")
     try:
@@ -369,7 +387,8 @@ def do_gallery_download(skins_dir):
 
     os.makedirs(skins_dir, exist_ok=True)
     added = 0
-    skipped = 0
+    existed = 0
+    rejected = 0
 
     with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
         for info in zf.infolist():
@@ -381,16 +400,21 @@ def do_gallery_download(skins_dir):
             rel_path = info.filename[len(SKINS_ZIP_PREFIX):]
             if not rel_path:
                 continue
+            # Check skip list (filename only, case-insensitive)
+            filename = os.path.basename(rel_path)
+            if filename.lower() in skip_list:
+                rejected += 1
+                continue
             dest = os.path.join(skins_dir, rel_path)
             if os.path.isfile(dest):
-                skipped += 1
+                existed += 1
                 continue
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with zf.open(info) as src, open(dest, "wb") as dst:
                 dst.write(src.read())
             added += 1
 
-    print(f"Added {added} new skins ({skipped} already existed)")
+    print(f"Added {added} new skins ({existed} already existed, {rejected} skipped from reject list)")
     return True
 
 
@@ -628,9 +652,11 @@ def main():
             if any_applied and not args.dry_run and cid in EXTRAS_BODY_ENTRIES:
                 btn_body_cache = {}
                 for entry_idx, btn_idx in EXTRAS_BODY_ENTRIES[cid]:
-                    if btn_idx not in btn_body_cache:
-                        btn_body_cache[btn_idx] = read_palette(rom, cid, btn_idx, 0)
-                    write_palette_at(rom, cid, entry_idx, btn_body_cache[btn_idx])
+                    # Shared entries (btn_idx=None) use LP (button 0) body palette
+                    pal_btn = btn_idx if btn_idx is not None else 0
+                    if pal_btn not in btn_body_cache:
+                        btn_body_cache[pal_btn] = read_palette(rom, cid, pal_btn, 0)
+                    write_palette_at(rom, cid, entry_idx, btn_body_cache[pal_btn])
 
     print()
 

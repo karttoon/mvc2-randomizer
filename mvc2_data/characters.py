@@ -82,57 +82,108 @@ EXTRA_BODY_BUTTON_SLOTS = {
 
 # Extras entries (index 56+) that use the character body sprite, keyed by
 # button index. These are animation frame palettes (shine, charging, stance,
-# power dive, etc.) that the game reads during specials/supers.
+# power dive, etc.) that the game reads during specials/supers/intros.
 # Format: char_id → list of (entry_index, button_index)
-# Parsed from PalMod's MVC2_A_DEF.h — only entries with sprite index 0
-# referencing the character's own sprite sheet are included.
-_B = {"LP": 0, "LK": 1, "HP": 2, "HK": 3, "A1": 4, "A2": 5}
+# Parsed from PalMod's MVC2_A_DEF.h — includes entries at sprite index 0
+# (shine, armor, stance) and non-zero sprite indices for intro/stance animations.
+# Button index None = shared across all buttons (use LP body palette).
 EXTRAS_BODY_ENTRIES = {
+    0x03: [  # Morrigan — Intro (4 per button, sprite 13)
+        *[(i, 0) for i in range(127, 131)],
+        *[(i, 1) for i in range(136, 140)],
+        *[(i, 2) for i in range(145, 149)],
+        *[(i, 3) for i in range(154, 158)],
+        *[(i, 4) for i in range(163, 167)],
+        *[(i, 5) for i in range(172, 176)],
+    ],
+    0x06: [  # Cyclops — Intro (8 per button, sprite 12) + Mega Optic Blast Stance (2 per button, sprite 13)
+        *[(i, b) for b in range(6) for i in range(88 + b*8, 96 + b*8)],
+        *[(136 + b*2, b) for b in range(6)],
+        *[(137 + b*2, b) for b in range(6)],
+    ],
     0x09: [  # Iceman — Shine Frames (7 per button)
         *[(i, b) for b in range(6) for i in range(80 + b*7, 87 + b*7)],
     ],
-    0x1C: [  # Mega Man — Intro (9), Charging (9), Magnetic Shockwave (1) per button
-        *[(i, 0) for i in [58,59,60,61,62,63,64,65,66, 94,95,96,97,98,99,100,101,102, 142]],
-        *[(i, 1) for i in [145,146,147,148,149,150,151,152,153, 181,182,183,184,185,186,187,188,189, 229]],
-        *[(i, 2) for i in [232,233,234,235,236,237,238,239,240, 268,269,270,271,272,273,274,275,276, 316]],
-        *[(i, 3) for i in [319,320,321,322,323,324,325,326,327, 355,356,357,358,359,360,361,362,363, 403]],
-        *[(i, 4) for i in [406,407,408,409,410,411,412,413,414, 442,443,444,445,446,447,448,449,450, 490]],
-        *[(i, 5) for i in [493,494,495,496,497,498,499,500,501, 529,530,531,532,533,534,535,536,537]],
+    0x0C: [  # Spider-Man — Intro (8 per button, sprite 11, 16-stride)
+        *[(i, 0) for i in range(56, 64)],
+        *[(i, 1) for i in range(72, 80)],
+        *[(i, 2) for i in range(88, 96)],
+        *[(i, 3) for i in range(104, 112)],
+        *[(i, 4) for i in range(120, 128)],
+        *[(i, 5) for i in range(136, 144)],
+    ],
+    0x0F: [  # Doctor Doom — Intro (1 per button, sprite 11, 28-stride)
+        (56, 0), (84, 1), (112, 2), (140, 3), (168, 4), (196, 5),
+    ],
+    0x1C: [  # Mega Man — Intro (9), Charging (9), Teleport (1), Hyper Armor (9), Mag Shockwave (1) per btn
+        *[(i, 0) for i in [*range(58, 67), *range(94, 103), 112, *range(114, 123), 142]],
+        *[(i, 1) for i in [*range(145, 154), *range(181, 190), 199, *range(201, 210), 229]],
+        *[(i, 2) for i in [*range(232, 241), *range(268, 277), 286, *range(288, 297), 316]],
+        *[(i, 3) for i in [*range(319, 328), *range(355, 364), 373, *range(375, 384), 403]],
+        *[(i, 4) for i in [*range(406, 415), *range(442, 451), 460, *range(462, 471), 490]],
+        *[(i, 5) for i in [*range(493, 502), *range(529, 538), 547, *range(549, 558)]],
     ],
     0x1D: [  # Roll — Intro (9), Charging (9), Hyper Roll (9) per button
-        *[(i, 0) for i in [58,59,60,61,62,63,64,65,66, 94,95,96,97,98,99,100,101,102, 123,124,125,126,127,128,129,130,131]],
-        *[(i, 1) for i in [145,146,147,148,149,150,151,152,153, 181,182,183,184,185,186,187,188,189, 210,211,212,213,214,215,216,217,218]],
-        *[(i, 2) for i in [232,233,234,235,236,237,238,239,240, 268,269,270,271,272,273,274,275,276, 297,298,299,300,301,302,303,304,305]],
-        *[(i, 3) for i in [319,320,321,322,323,324,325,326,327, 355,356,357,358,359,360,361,362,363, 384,385,386,387,388,389,390,391,392]],
-        *[(i, 4) for i in [406,407,408,409,410,411,412,413,414, 442,443,444,445,446,447,448,449,450, 471,472,473,474,475,476,477,478,479]],
-        *[(i, 5) for i in [493,494,495,496,497,498,499,500,501, 529,530,531,532,533,534,535,536,537, 558,559,560,561,562,563,564,565,566]],
+        *[(i, 0) for i in [*range(58, 67), *range(94, 103), *range(123, 132)]],
+        *[(i, 1) for i in [*range(145, 154), *range(181, 190), *range(210, 219)]],
+        *[(i, 2) for i in [*range(232, 241), *range(268, 277), *range(297, 306)]],
+        *[(i, 3) for i in [*range(319, 328), *range(355, 364), *range(384, 393)]],
+        *[(i, 4) for i in [*range(406, 415), *range(442, 451), *range(471, 480)]],
+        *[(i, 5) for i in [*range(493, 502), *range(529, 538), *range(558, 567)]],
     ],
     0x22: [  # Sakura — Evil Sakura (1 per button)
         (76, 0), (77, 1), (78, 2), (79, 3), (80, 4), (81, 5),
     ],
+    0x25: [  # Dhalsim — Teleport (5 per button, sprite 11)
+        *[(i, b) for b in range(6) for i in range(56 + b*5, 61 + b*5)],
+    ],
     0x28: [  # Gambit — Royal Flush/Cajun Explosion shine (5 per button)
         *[(i, b) for b in range(6) for i in range(56 + b*5, 61 + b*5)],
     ],
-    0x29: [  # Juggernaut — Juggernaut Punch shine (2 per button)
-        *[(56 + b*10, b) for b in range(6)],
-        *[(57 + b*10, b) for b in range(6)],
+    0x29: [  # Juggernaut — Headcrush (2) + Power-Up (8) per button, 10-stride
+        *[(i, b) for b in range(6) for i in range(56 + b*10, 66 + b*10)],
+    ],
+    0x2D: [  # Shuma-Gorath — Stance (1 per button, 48-stride)
+        (90, 0), (138, 1), (186, 2), (234, 3), (282, 4), (330, 5),
     ],
     0x2F: [  # Silver Samurai — Super Armor shine/stance (7 per button, gaps)
-        *[(i, 0) for i in [56,57,58,59,60,61,62]],
-        *[(i, 1) for i in [64,65,66,67,68,69,70]],
-        *[(i, 2) for i in [72,73,74,75,76,77,78]],
-        *[(i, 3) for i in [80,81,82,83,84,85,86]],
-        *[(i, 4) for i in [88,89,90,91,92,93,94]],
-        *[(i, 5) for i in [96,97,98,99,100,101,102]],
+        *[(i, 0) for i in range(56, 63)],
+        *[(i, 1) for i in range(64, 71)],
+        *[(i, 2) for i in range(72, 79)],
+        *[(i, 3) for i in range(80, 87)],
+        *[(i, 4) for i in range(88, 95)],
+        *[(i, 5) for i in range(96, 103)],
+    ],
+    0x30: [  # Omega Red — Intro (4 per button, sprite 11; LP has 8 entries)
+        *[(i, 0) for i in [*range(56, 60), *range(68, 72)]],
+        *[(i, 1) for i in range(60, 64)],
+        *[(i, 2) for i in range(64, 68)],
+        *[(i, 4) for i in range(72, 76)],
+        *[(i, 5) for i in range(76, 80)],
+    ],
+    0x31: [  # Spiral — Power-Up Enhance (6 per button, sprite 11, 28-stride)
+        *[(i, 0) for i in range(92, 98)],
+        *[(i, 1) for i in range(120, 126)],
+        *[(i, 2) for i in range(148, 154)],
+        *[(i, 3) for i in range(176, 182)],
+        *[(i, 4) for i in range(204, 210)],
+        *[(i, 5) for i in range(232, 238)],
     ],
     0x32: [  # Colossus — Shine/Stance/Power Dive frames (32 per button)
         *[(i, b) for b in range(6) for i in range(56 + b*32, 88 + b*32)],
     ],
-    0x37: [  # Jin — Special Armor (6 per button)
+    0x35: [  # Blackheart — Intro (shared, 1 entry)
+        (74, None),
+    ],
+    0x37: [  # Jin — Special Armor (6) + Power-Up Flash (6) per button
         *[(i, b) for b in range(6) for i in range(56 + b*6, 62 + b*6)],
+        *[(i, b) for b in range(6) for i in range(92 + b*6, 98 + b*6)],
+    ],
+    0x38: [  # Captain Commando — Laser Intro (4 shared) + Intro (1 per button)
+        *[(i, None) for i in range(56, 60)],
+        (61, 0), (63, 1), (65, 2), (67, 3), (69, 4), (71, 5),
     ],
 }
-del _B
 
 
 def palette_slot_map(char_id):
