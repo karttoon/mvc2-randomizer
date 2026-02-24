@@ -288,3 +288,32 @@ def rgb_to_argb4444(r, g, b):
     Each channel is quantized from 8-bit to 4-bit (divide by 17).
     """
     return (0xF << 12) | ((r // 17) << 8) | ((g // 17) << 4) | (b // 17)
+
+
+def adjust_luminance(colors, amount):
+    """Apply a luminance shift to a palette, matching PalMod's MOD_LUM.
+
+    Converts each color to HLS, adds amount/100 to lightness, clamps to
+    [0, 1], and converts back. Index 0 (transparent) is left untouched.
+
+    Args:
+        colors: List of 16 (R, G, B) tuples (8-bit values).
+        amount: Luminance adjustment (PalMod units, e.g. 7 means +0.07).
+    Returns:
+        New list of 16 (R, G, B) tuples.
+    """
+    import colorsys
+
+    add_l = amount / 100.0
+    result = []
+    for i, (r, g, b) in enumerate(colors):
+        if i == 0:
+            result.append((0, 0, 0))
+            continue
+        # Convert 8-bit RGB to 0-1 range
+        rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
+        h, l, s = colorsys.rgb_to_hls(rf, gf, bf)
+        l = max(0.0, min(1.0, l + add_l))
+        rf2, gf2, bf2 = colorsys.hls_to_rgb(h, l, s)
+        result.append((round(rf2 * 255), round(gf2 * 255), round(bf2 * 255)))
+    return result

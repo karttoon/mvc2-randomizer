@@ -35,7 +35,7 @@ from mvc2_data.characters import (
 from mvc2_data.steam import (
     read_arc, write_arc, validate_rom,
     read_palette, write_palette, write_palette_at,
-    TOTAL_PALETTE_COUNT,
+    adjust_luminance, TOTAL_PALETTE_COUNT,
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -653,12 +653,21 @@ def main():
             # Write body palettes to extras animation frame entries
             if any_applied and not args.dry_run and cid in EXTRAS_BODY_ENTRIES:
                 btn_body_cache = {}
-                for entry_idx, btn_idx in EXTRAS_BODY_ENTRIES[cid]:
+                lum_cache = {}
+                for entry in EXTRAS_BODY_ENTRIES[cid]:
+                    entry_idx, btn_idx = entry[0], entry[1]
+                    lum = entry[2] if len(entry) > 2 else None
                     # Shared entries (btn_idx=None) use LP (button 0) body palette
                     pal_btn = btn_idx if btn_idx is not None else 0
                     if pal_btn not in btn_body_cache:
                         btn_body_cache[pal_btn] = read_palette(rom, cid, pal_btn, 0)
-                    write_palette_at(rom, cid, entry_idx, btn_body_cache[pal_btn])
+                    colors = btn_body_cache[pal_btn]
+                    if lum:
+                        cache_key = (pal_btn, lum)
+                        if cache_key not in lum_cache:
+                            lum_cache[cache_key] = adjust_luminance(colors, lum)
+                        colors = lum_cache[cache_key]
+                    write_palette_at(rom, cid, entry_idx, colors)
 
     print()
 

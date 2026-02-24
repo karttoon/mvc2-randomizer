@@ -83,101 +83,135 @@ EXTRA_BODY_BUTTON_SLOTS = {
 # Extras entries (index 56+) that use the character body sprite, keyed by
 # button index. These are animation frame palettes (shine, charging, stance,
 # power dive, etc.) that the game reads during specials/supers/intros.
-# Format: char_id → list of (entry_index, button_index)
-# Parsed from PalMod's MVC2_A_DEF.h — includes entries at sprite index 0
-# (shine, armor, stance) and non-zero sprite indices for intro/stance animations.
+# Format: char_id → list of (entry_index, button_index) or
+#                            (entry_index, button_index, luminance)
+# Parsed from PalMod's MVC2_A_DEF.h and MVC2_SUPP supplemental data.
 # Button index None = shared across all buttons (use LP body palette).
+# Luminance = PalMod MOD_LUM delta (e.g. 7 → +0.07 lightness in HLS).
 EXTRAS_BODY_ENTRIES = {
-    0x03: [  # Morrigan — Intro (4 per button, sprite 13)
-        *[(i, 0) for i in range(127, 131)],
-        *[(i, 1) for i in range(136, 140)],
-        *[(i, 2) for i in range(145, 149)],
-        *[(i, 3) for i in range(154, 158)],
-        *[(i, 4) for i in range(163, 167)],
-        *[(i, 5) for i in range(172, 176)],
+    0x03: [  # Morrigan — Intro phase-in (4 per button, 9-stride; lum 20/13/7/copy)
+        *[(127 + b*9, b, 20) for b in range(6)],
+        *[(128 + b*9, b, 13) for b in range(6)],
+        *[(129 + b*9, b, 7) for b in range(6)],
+        *[(130 + b*9, b) for b in range(6)],
     ],
-    0x06: [  # Cyclops — Intro (8 per button, sprite 12) + Mega Optic Blast Stance (2 per button, sprite 13)
-        *[(i, b) for b in range(6) for i in range(88 + b*8, 96 + b*8)],
+    0x06: [  # Cyclops — Intro (8 per button, 8-stride; lum -3→-39) + MOB Stance (2)
+        *[(88 + b*8, b, -3) for b in range(6)],
+        *[(89 + b*8, b, -7) for b in range(6)],
+        *[(90 + b*8, b, -11) for b in range(6)],
+        *[(91 + b*8, b, -17) for b in range(6)],
+        *[(92 + b*8, b, -24) for b in range(6)],
+        *[(93 + b*8, b, -30) for b in range(6)],
+        *[(94 + b*8, b, -33) for b in range(6)],
+        *[(95 + b*8, b, -39) for b in range(6)],
         *[(136 + b*2, b) for b in range(6)],
         *[(137 + b*2, b) for b in range(6)],
     ],
-    0x09: [  # Iceman — Shine Frames (7 per button)
+    0x09: [  # Iceman — Shine Frames (7 per button, 7-stride)
         *[(i, b) for b in range(6) for i in range(80 + b*7, 87 + b*7)],
     ],
-    0x0C: [  # Spider-Man — Intro (8 per button, sprite 11, 16-stride)
-        *[(i, 0) for i in range(56, 64)],
-        *[(i, 1) for i in range(72, 80)],
-        *[(i, 2) for i in range(88, 96)],
-        *[(i, 3) for i in range(104, 112)],
-        *[(i, 4) for i in range(120, 128)],
-        *[(i, 5) for i in range(136, 144)],
+    0x0C: [  # Spider-Man — Intro (8 per button, 16-stride; lum -29→-3)
+        *[(56 + b*16, b, -29) for b in range(6)],
+        *[(57 + b*16, b, -23) for b in range(6)],
+        *[(58 + b*16, b, -17) for b in range(6)],
+        *[(59 + b*16, b, -12) for b in range(6)],
+        *[(60 + b*16, b, -8) for b in range(6)],
+        *[(61 + b*16, b, -7) for b in range(6)],
+        *[(62 + b*16, b, -5) for b in range(6)],
+        *[(63 + b*16, b, -3) for b in range(6)],
     ],
-    0x0F: [  # Doctor Doom — Intro (1 per button, sprite 11, 28-stride)
+    0x0F: [  # Doctor Doom — Intro (1 per button, 28-stride)
         (56, 0), (84, 1), (112, 2), (140, 3), (168, 4), (196, 5),
     ],
-    0x1C: [  # Mega Man — Intro (9), Charging (9), Teleport (1), Hyper Armor (9), Mag Shockwave (1) per btn
-        *[(i, 0) for i in [*range(58, 67), *range(94, 103), 112, *range(114, 123), 142]],
-        *[(i, 1) for i in [*range(145, 154), *range(181, 190), 199, *range(201, 210), 229]],
-        *[(i, 2) for i in [*range(232, 241), *range(268, 277), 286, *range(288, 297), 316]],
-        *[(i, 3) for i in [*range(319, 328), *range(355, 364), 373, *range(375, 384), 403]],
-        *[(i, 4) for i in [*range(406, 415), *range(442, 451), 460, *range(462, 471), 490]],
-        *[(i, 5) for i in [*range(493, 502), *range(529, 538), 547, *range(549, 558)]],
+    0x1C: [  # Mega Man — Intro (9; lum), Charging (9), Teleport (1), Hyper Armor (9), Mag Shockwave (1)
+        *[e for b in range(6) for e in [
+            (58+b*87, b, -25), (59+b*87, b, -7), (60+b*87, b, -5), (61+b*87, b),
+            (62+b*87, b, 5), (63+b*87, b, 10), (64+b*87, b, 16), (65+b*87, b, 22), (66+b*87, b),
+        ]],
+        *[(94 + b*87 + i, b) for b in range(6) for i in range(9)],     # Charging
+        *[(112 + b*87, b) for b in range(6)],                           # Teleport
+        *[(114 + b*87 + i, b) for b in range(6) for i in range(9)],    # Hyper Armor
+        *[(142 + b*87, b) for b in range(5)],                           # Mag Shockwave (LP-A1)
     ],
-    0x1D: [  # Roll — Intro (9), Charging (9), Hyper Roll (9) per button
-        *[(i, 0) for i in [*range(58, 67), *range(94, 103), *range(123, 132)]],
-        *[(i, 1) for i in [*range(145, 154), *range(181, 190), *range(210, 219)]],
-        *[(i, 2) for i in [*range(232, 241), *range(268, 277), *range(297, 306)]],
-        *[(i, 3) for i in [*range(319, 328), *range(355, 364), *range(384, 393)]],
-        *[(i, 4) for i in [*range(406, 415), *range(442, 451), *range(471, 480)]],
-        *[(i, 5) for i in [*range(493, 502), *range(529, 538), *range(558, 567)]],
+    0x1D: [  # Roll — Intro (9; lum), Charging (9), Hyper Roll (9; lum)
+        *[e for b in range(6) for e in [
+            (58+b*87, b, -21), (59+b*87, b, -13), (60+b*87, b, -5), (61+b*87, b),
+            (62+b*87, b, 5), (63+b*87, b, 13), (64+b*87, b, 21), (65+b*87, b, 35), (66+b*87, b),
+        ]],
+        *[(94 + b*87 + i, b) for b in range(6) for i in range(9)],     # Charging
+        *[e for b in range(6) for e in [                                # Hyper Roll
+            (123+b*87, b, -25), (124+b*87, b, -7), (125+b*87, b, -5), (126+b*87, b),
+            (127+b*87, b, 5), (128+b*87, b, 10), (129+b*87, b, 16), (130+b*87, b, 22), (131+b*87, b),
+        ]],
     ],
     0x22: [  # Sakura — Evil Sakura (1 per button)
         (76, 0), (77, 1), (78, 2), (79, 3), (80, 4), (81, 5),
     ],
-    0x25: [  # Dhalsim — Teleport (5 per button, sprite 11)
-        *[(i, b) for b in range(6) for i in range(56 + b*5, 61 + b*5)],
+    0x25: [  # Dhalsim — Teleport (5 per button, 5-stride; lum 15/27/42/65/copy)
+        *[(56 + b*5, b, 15) for b in range(6)],
+        *[(57 + b*5, b, 27) for b in range(6)],
+        *[(58 + b*5, b, 42) for b in range(6)],
+        *[(59 + b*5, b, 65) for b in range(6)],
+        *[(60 + b*5, b) for b in range(6)],
     ],
-    0x28: [  # Gambit — Royal Flush/Cajun Explosion shine (5 per button)
-        *[(i, b) for b in range(6) for i in range(56 + b*5, 61 + b*5)],
+    0x28: [  # Gambit — Royal Flush/Cajun Explosion (5 per button, 5-stride; lum 10/5/0/-5/-10)
+        *[(56 + b*5, b, 10) for b in range(6)],
+        *[(57 + b*5, b, 5) for b in range(6)],
+        *[(58 + b*5, b) for b in range(6)],
+        *[(59 + b*5, b, -5) for b in range(6)],
+        *[(60 + b*5, b, -10) for b in range(6)],
     ],
-    0x29: [  # Juggernaut — Headcrush (2) + Power-Up (8) per button, 10-stride
-        *[(i, b) for b in range(6) for i in range(56 + b*10, 66 + b*10)],
+    0x29: [  # Juggernaut — Headcrush (2, copy) + Power-Up (8, 10-stride; lum 6→4→copy)
+        *[(56 + b*10, b) for b in range(6)],
+        *[(57 + b*10, b) for b in range(6)],
+        *[(58 + b*10, b, 6) for b in range(6)],
+        *[(59 + b*10, b, 12) for b in range(6)],
+        *[(60 + b*10, b, 15) for b in range(6)],
+        *[(61 + b*10, b, 18) for b in range(6)],
+        *[(62 + b*10, b, 12) for b in range(6)],
+        *[(63 + b*10, b, 7) for b in range(6)],
+        *[(64 + b*10, b, 4) for b in range(6)],
+        *[(65 + b*10, b) for b in range(6)],
+    ],
+    0x2A: [  # Storm — Lightning Effect (3 per button, 3-stride; copy/lum+7/lum+17)
+        *[(72 + b*3, b) for b in range(6)],
+        *[(73 + b*3, b, 7) for b in range(6)],
+        *[(74 + b*3, b, 17) for b in range(6)],
     ],
     0x2D: [  # Shuma-Gorath — Stance (1 per button, 48-stride)
         (90, 0), (138, 1), (186, 2), (234, 3), (282, 4), (330, 5),
     ],
-    0x2F: [  # Silver Samurai — Super Armor shine/stance (7 per button, gaps)
-        *[(i, 0) for i in range(56, 63)],
-        *[(i, 1) for i in range(64, 71)],
-        *[(i, 2) for i in range(72, 79)],
-        *[(i, 3) for i in range(80, 87)],
-        *[(i, 4) for i in range(88, 95)],
-        *[(i, 5) for i in range(96, 103)],
+    0x2F: [  # Silver Samurai — Super Armor shine/stance (7 per button, 8-stride; last frame lum -5)
+        *[e for b in range(6) for e in [
+            *[(56 + b*8 + i, b) for i in range(6)],
+            (62 + b*8, b, -5),
+        ]],
     ],
-    0x30: [  # Omega Red — Intro (4 per button, sprite 11; LP has 8 entries)
-        *[(i, 0) for i in [*range(56, 60), *range(68, 72)]],
-        *[(i, 1) for i in range(60, 64)],
-        *[(i, 2) for i in range(64, 68)],
-        *[(i, 4) for i in range(72, 76)],
-        *[(i, 5) for i in range(76, 80)],
+    0x30: [  # Omega Red — Intro (4 per button, 4-stride; lum -25/-12/-9/-5)
+        *[(56 + b*4, b, -25) for b in range(6)],
+        *[(57 + b*4, b, -12) for b in range(6)],
+        *[(58 + b*4, b, -9) for b in range(6)],
+        *[(59 + b*4, b, -5) for b in range(6)],
     ],
-    0x31: [  # Spiral — Power-Up Enhance (6 per button, sprite 11, 28-stride)
-        *[(i, 0) for i in range(92, 98)],
-        *[(i, 1) for i in range(120, 126)],
-        *[(i, 2) for i in range(148, 154)],
-        *[(i, 3) for i in range(176, 182)],
-        *[(i, 4) for i in range(204, 210)],
-        *[(i, 5) for i in range(232, 238)],
+    0x31: [  # Spiral — Power-Up Enhance (6 per button, 28-stride)
+        *[(92 + b*28 + i, b) for b in range(6) for i in range(6)],
     ],
-    0x32: [  # Colossus — Shine/Stance/Power Dive frames (32 per button)
-        *[(i, b) for b in range(6) for i in range(56 + b*32, 88 + b*32)],
+    0x32: [  # Colossus — Shine/Stance/Power Dive (32 per button; Power Dive has lum)
+        *[
+            (56 + b*32 + i, b, lum) if lum else (56 + b*32 + i, b)
+            for b in range(6) for i in range(32)
+            for lum in [{15: 31, 16: 45, 18: -18, 19: -13, 20: -6, 22: -5, 23: 25}.get(i)]
+        ],
     ],
     0x35: [  # Blackheart — Intro (shared, 1 entry)
         (74, None),
     ],
-    0x37: [  # Jin — Special Armor (6) + Power-Up Flash (6) per button
-        *[(i, b) for b in range(6) for i in range(56 + b*6, 62 + b*6)],
-        *[(i, b) for b in range(6) for i in range(92 + b*6, 98 + b*6)],
+    0x37: [  # Jin — Special Armor (6) + Power-Up Flash (6, 6-stride; lum 32/25/16/10)
+        *[(56 + b*6 + i, b) for b in range(6) for i in range(6)],
+        *[e for b in range(6) for e in [
+            (92 + b*6, b), (93 + b*6, b, 32), (94 + b*6, b, 25),
+            (95 + b*6, b, 16), (96 + b*6, b, 10), (97 + b*6, b),
+        ]],
     ],
     0x38: [  # Captain Commando — Laser Intro (4 shared) + Intro (1 per button)
         *[(i, None) for i in range(56, 60)],
