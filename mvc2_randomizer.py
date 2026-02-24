@@ -669,6 +669,10 @@ def main():
     else:
         print(f"Writing modified archive...")
         write_arc(arc_path, rom)
+        # Touch backup so its mtime stays newer than the modified arc.
+        # Without this, the next run would see arc newer than backup and
+        # overwrite the clean backup with randomized data.
+        os.utime(backup_path)
         # Save assignment log so user can check what was applied
         with open(LAST_RUN_LOG, "w") as f:
             f.write("\n".join(run_log) + "\n")
