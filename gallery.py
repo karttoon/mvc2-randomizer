@@ -22,6 +22,21 @@ import webbrowser
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SKIP_LOG = os.path.join(SCRIPT_DIR, "gallery_skip.txt")
+VERDICTS_FILE = os.path.join(SCRIPT_DIR, "gallery_verdicts.json")
+
+
+def load_verdicts():
+    """Load persisted verdicts from gallery_verdicts.json."""
+    if os.path.isfile(VERDICTS_FILE):
+        with open(VERDICTS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def save_verdicts(verdicts):
+    """Save all verdicts to gallery_verdicts.json."""
+    with open(VERDICTS_FILE, "w") as f:
+        json.dump(verdicts, f, indent=1, sort_keys=True)
 
 
 def scan_skins(root_dir):
@@ -368,6 +383,7 @@ class GalleryHandler(http.server.BaseHTTPRequestHandler):
 
         if self.path == "/verdict":
             self.verdicts[body["key"]] = body["verdict"]
+            save_verdicts(self.verdicts)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -391,6 +407,7 @@ class GalleryHandler(http.server.BaseHTTPRequestHandler):
                 with open(SKIP_LOG, "a") as f:
                     for entry in skip_entries:
                         f.write(entry + "\n")
+                save_verdicts(self.verdicts)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -428,7 +445,24 @@ def main():
     print()
 
     GalleryHandler.root_dir = root_dir
-    GalleryHandler.verdicts = {}
+
+    # Load persisted verdicts; prune entries for files that no longer exist
+    saved = load_verdicts()
+    pruned = {}
+    for key, verdict in saved.items():
+        filepath = os.path.join(root_dir, key)
+        if os.path.isfile(filepath):
+            pruned[key] = verdict
+        # Deleted files stay out — already in gallery_skip.txt
+    GalleryHandler.verdicts = pruned
+    if pruned:
+        kept = sum(1 for v in pruned.values() if v == "keep")
+        marked = sum(1 for v in pruned.values() if v == "delete")
+        print(f"Loaded {len(pruned)} saved verdicts ({kept} kept, {marked} marked)")
+        if len(saved) != len(pruned):
+            save_verdicts(pruned)
+            print(f"  Pruned {len(saved) - len(pruned)} entries for missing files")
+    print()
 
     server = http.server.HTTPServer(("127.0.0.1", args.port), GalleryHandler)
     url = f"http://127.0.0.1:{args.port}"
