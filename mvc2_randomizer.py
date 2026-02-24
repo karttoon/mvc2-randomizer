@@ -343,24 +343,26 @@ def do_restore(arc_path):
     return True
 
 
-def load_skip_list():
-    """Load gallery_skip.txt — filenames the user previously rejected."""
-    skip_file = os.path.join(SCRIPT_DIR, "gallery_skip.txt")
-    skips = set()
-    if os.path.isfile(skip_file):
-        with open(skip_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    skips.add(line.lower())
-    return skips
+def load_rejected_skins():
+    """Load rejected skins from gallery_verdicts.json (verdict == 'delete')."""
+    verdicts_file = os.path.join(SCRIPT_DIR, "gallery_verdicts.json")
+    rejected = set()
+    if os.path.isfile(verdicts_file):
+        with open(verdicts_file, "r") as f:
+            verdicts = json.load(f)
+        for key, verdict in verdicts.items():
+            if verdict == "delete":
+                # key is "Character/filename.png" — extract filename
+                filename = key.split("/", 1)[-1] if "/" in key else key
+                rejected.add(filename.lower())
+    return rejected
 
 
 def do_gallery_download(skins_dir):
     """Download the skins gallery from GitHub and merge into existing collection.
 
     Only adds new files — existing skins (including user's own custom palettes)
-    are preserved. Previously rejected skins (in gallery_skip.txt) are skipped.
+    are preserved. Previously rejected skins (in gallery_verdicts.json) are skipped.
     Safe to run repeatedly to pick up gallery updates.
     """
     print("=" * 60)
@@ -370,9 +372,9 @@ def do_gallery_download(skins_dir):
     print(f"Output: {skins_dir}")
     print()
 
-    skip_list = load_skip_list()
+    skip_list = load_rejected_skins()
     if skip_list:
-        print(f"Skip list: {len(skip_list)} previously rejected skins")
+        print(f"Rejected skins: {len(skip_list)} (from gallery verdicts)")
 
     print("Downloading archive (this may take a while)...")
     try:

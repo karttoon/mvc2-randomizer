@@ -2,7 +2,6 @@ skins/**/*.png
 randomizer_config.json
 skin_locks.txt
 last_run.txt
-gallery_skip.txt
 gallery_verdicts.json
 __pycache__/
 *.pyc

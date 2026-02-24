@@ -4,8 +4,8 @@ MvC2 Skin Curation Gallery — review and delete unwanted skins.
 
 Shows skins one at a time. Thumbs up to keep, thumbs down to mark for deletion.
 Left/Right arrows to navigate. "Delete All Marked" button to batch-delete.
-Deleted filenames are logged to gallery_skip.txt so future --gallery-download
-runs won't re-add them.
+Verdicts persist in gallery_verdicts.json so future --gallery-download runs
+skip rejected skins and previously reviewed skins show their status on relaunch.
 
 Usage:
     python gallery.py [skins_path]
@@ -21,7 +21,6 @@ import urllib.parse
 import webbrowser
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SKIP_LOG = os.path.join(SCRIPT_DIR, "gallery_skip.txt")
 VERDICTS_FILE = os.path.join(SCRIPT_DIR, "gallery_verdicts.json")
 
 
@@ -392,22 +391,13 @@ class GalleryHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/delete-all":
             keys = body.get("keys", [])
             deleted = 0
-            skip_entries = []
             for key in keys:
                 filepath = os.path.join(self.root_dir, key)
                 if os.path.isfile(filepath):
                     os.remove(filepath)
                     deleted += 1
-                    # Log the filename (not the full key) for skip list
-                    skip_entries.append(key.split("/", 1)[-1] if "/" in key else key)
-                self.verdicts.pop(key, None)
-
-            # Append to gallery_skip.txt
-            if skip_entries:
-                with open(SKIP_LOG, "a") as f:
-                    for entry in skip_entries:
-                        f.write(entry + "\n")
-                save_verdicts(self.verdicts)
+                # Keep verdict as 'delete' so gallery-download won't re-add
+            save_verdicts(self.verdicts)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -446,22 +436,25 @@ def main():
 
     GalleryHandler.root_dir = root_dir
 
-    # Load persisted verdicts; prune entries for files that no longer exist
+    # Load persisted verdicts; prune stale 'keep' entries for missing files
+    # but retain 'delete' verdicts so gallery-download won't re-add them.
     saved = load_verdicts()
     pruned = {}
+    stale = 0
     for key, verdict in saved.items():
         filepath = os.path.join(root_dir, key)
-        if os.path.isfile(filepath):
+        if verdict == "delete" or os.path.isfile(filepath):
             pruned[key] = verdict
-        # Deleted files stay out — already in gallery_skip.txt
+        else:
+            stale += 1
     GalleryHandler.verdicts = pruned
     if pruned:
         kept = sum(1 for v in pruned.values() if v == "keep")
         marked = sum(1 for v in pruned.values() if v == "delete")
-        print(f"Loaded {len(pruned)} saved verdicts ({kept} kept, {marked} marked)")
-        if len(saved) != len(pruned):
+        print(f"Loaded {len(pruned)} saved verdicts ({kept} kept, {marked} rejected)")
+        if stale:
             save_verdicts(pruned)
-            print(f"  Pruned {len(saved) - len(pruned)} entries for missing files")
+            print(f"  Pruned {stale} stale keep entries for missing files")
     print()
 
     server = http.server.HTTPServer(("127.0.0.1", args.port), GalleryHandler)
