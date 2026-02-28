@@ -249,6 +249,10 @@ def extract_png_palette(filepath):
     Returns a flat list of (R, G, B) tuples — 16 per palette row.
     For multi-row characters, the PNG contains indices 0-N*16 with
     colors stored consecutively in the palette.
+
+    Handles PNGs with shifted palette indices (e.g. colors at 240-255
+    instead of 0-15) by detecting all-black body palette and remapping
+    from the actually-used indices.
     """
     img = Image.open(filepath)
     if img.mode != "P":
@@ -258,14 +262,38 @@ def extract_png_palette(filepath):
     if not raw_palette:
         return None
 
-    # Determine how many colors are actually in the palette
     n_colors = len(raw_palette) // 3
+
+    # Check for shifted palette: body indices 1-15 all black but pixels
+    # use higher indices. This happens with some PNGs saved by external
+    # tools that place colors at the end of a 256-entry palette.
+    pixels = img.getdata()
+    max_idx = max(pixels) if pixels else 0
+    body_all_black = (n_colors >= 16 and max_idx > 15 and
+                      all(raw_palette[i * 3] == 0 and
+                          raw_palette[i * 3 + 1] == 0 and
+                          raw_palette[i * 3 + 2] == 0
+                          for i in range(1, 16)))
+
+    if body_all_black:
+        # Remap: extract colors from the indices pixels actually use
+        used = sorted(set(pixels) - {0})
+        colors = [(0, 0, 0)]  # index 0 = transparent
+        for idx in used:
+            if idx < n_colors:
+                i = idx
+                colors.append((raw_palette[i * 3], raw_palette[i * 3 + 1],
+                                raw_palette[i * 3 + 2]))
+            else:
+                colors.append((0, 0, 0))
+        img.close()
+        return colors
+
+    # Normal path: sequential palette
     colors = []
     for i in range(n_colors):
-        r = raw_palette[i * 3]
-        g = raw_palette[i * 3 + 1]
-        b = raw_palette[i * 3 + 2]
-        colors.append((r, g, b))
+        colors.append((raw_palette[i * 3], raw_palette[i * 3 + 1],
+                        raw_palette[i * 3 + 2]))
 
     img.close()
     return colors
