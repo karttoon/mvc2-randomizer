@@ -16,7 +16,6 @@ This tool randomizes **character palettes** across all 56 playable characters an
 
 It does **not** modify:
 
-- Projectile/effect colors (fireballs, beams, lightning, etc.)
 - Status effect palettes (burn, shock, kinetic charge overlays)
 - HUD elements or portraits
 
