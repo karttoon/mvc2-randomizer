@@ -77,6 +77,7 @@ PALETTE_SLOT_MAP = {
 # Only characters with non-standard body slots beyond {0, 6, 7} are listed.
 EXTRA_BODY_BUTTON_SLOTS = {
     0x09: {2},       # Iceman — slot 2 (Stance Frame)
+    0x0A: {4, 5},    # Rogue — slots 4-5 (Dash Shadows)
     0x2F: {1},       # Silver Samurai — slot 1 (Shadow Frame)
     0x32: {3},       # Colossus — slot 3 (Stance Frame Main Color)
 }
@@ -90,11 +91,20 @@ EXTRA_BODY_BUTTON_SLOTS = {
 # Button index None = shared across all buttons (use LP body palette).
 # Luminance = PalMod MOD_LUM delta (e.g. 7 → +0.07 lightness in HLS).
 EXTRAS_BODY_ENTRIES = {
-    0x03: [  # Morrigan — Intro phase-in (4 per button, 9-stride; lum 20/13/7/copy)
+    0x01: [  # Zangief — FAB Effect (3 per button, 3-stride; body copy approx for tint)
+        *[(70 + b*3 + i, b) for b in range(6) for i in range(3)],
+    ],
+    0x03: [  # Morrigan — Join pose + Intro + Taunt
+        # Join Morrigan (1 per button, 9-stride; body copy)
+        *[(124 + b*9, b) for b in range(6)],
+        *[(125 + b*9, b) for b in range(6)],   # join+white (approx body copy)
+        # Intro phase-in (4 per button, 9-stride; lum 20/13/7/copy)
         *[(127 + b*9, b, 20) for b in range(6)],
         *[(128 + b*9, b, 13) for b in range(6)],
         *[(129 + b*9, b, 7) for b in range(6)],
         *[(130 + b*9, b) for b in range(6)],
+        # Taunt (1 per button, 1-stride; body copy approx for sleeve mods)
+        *[(176 + b, b) for b in range(6)],
     ],
     0x06: [  # Cyclops — Intro (8 per button, 8-stride; lum -3→-39) + MOB Stance (2)
         *[(88 + b*8, b, -3) for b in range(6)],
@@ -110,6 +120,10 @@ EXTRAS_BODY_ENTRIES = {
     ],
     0x09: [  # Iceman — Shine Frames (7 per button, 7-stride)
         *[(i, b) for b in range(6) for i in range(80 + b*7, 87 + b*7)],
+    ],
+    0x0A: [  # Rogue — Dash Shadows (2 per button, 2-stride; lum -8/-12)
+        *[(64 + b*2, b, -8) for b in range(6)],
+        *[(65 + b*2, b, -12) for b in range(6)],
     ],
     0x0C: [  # Spider-Man — Intro (8 per button, 16-stride; lum -29→-3)
         *[(56 + b*16, b, -29) for b in range(6)],
@@ -147,6 +161,9 @@ EXTRAS_BODY_ENTRIES = {
     ],
     0x22: [  # Sakura — Evil Sakura (1 per button)
         (76, 0), (77, 1), (78, 2), (79, 3), (80, 4), (81, 5),
+    ],
+    0x24: [  # Cammy — Counterflash (9 per button, 9-stride; body copy approx for tint)
+        *[(56 + b*9 + i, b) for b in range(6) for i in range(9)],
     ],
     0x25: [  # Dhalsim — Teleport (5 per button, 5-stride; lum 15/27/42/65/copy)
         *[(56 + b*5, b, 15) for b in range(6)],
@@ -213,6 +230,13 @@ EXTRAS_BODY_ENTRIES = {
     ],
     0x31: [  # Spiral — Power-Up Enhance (6 per button, 28-stride)
         *[(92 + b*28 + i, b) for b in range(6) for i in range(6)],
+        # Speed-Up Enhance (6 per button, 28-stride; lum 0/5/10/13/23/40)
+        *[(98 + b*28, b) for b in range(6)],
+        *[(99 + b*28, b, 5) for b in range(6)],
+        *[(100 + b*28, b, 10) for b in range(6)],
+        *[(101 + b*28, b, 13) for b in range(6)],
+        *[(102 + b*28, b, 23) for b in range(6)],
+        *[(103 + b*28, b, 40) for b in range(6)],
     ],
     0x32: [  # Colossus — Shine/Stance/Power Dive (32 per button; Power Dive has lum)
         *[
@@ -234,6 +258,25 @@ EXTRAS_BODY_ENTRIES = {
     0x38: [  # Captain Commando — Laser Intro (4 shared) + Intro (1 per button)
         *[(i, None) for i in range(56, 60)],
         (61, 0), (63, 1), (65, 2), (67, 3), (69, 4), (71, 5),
+    ],
+    0x3A: [  # Servbot — King Kobun (4 per button, 5-stride; lum 0/23/32/40)
+        *[(56 + b*5, b) for b in range(6)],
+        *[(57 + b*5, b, 23) for b in range(6)],
+        *[(58 + b*5, b, 32) for b in range(6)],
+        *[(59 + b*5, b, 40) for b in range(6)],
+    ],
+}
+
+
+# Extras entries derived from specific palette slots (not body slot 0).
+# Shared entries (btn_idx=None) use LP (button 0) as source.
+# Format: char_id → list of (entry_index, button_idx_or_None,
+#                             [(start_color, end_color, source_slot), ...])
+# Each segment copies colors[start:end] from the given source slot.
+EXTRAS_SLOT_ENTRIES = {
+    0x34: [  # Sentinel — shared flame/fly effect palettes
+        (65, None, [(0, 16, 3)]),  # Launcher/RP flames → LP rockets palette
+        (66, None, [(0, 16, 3)]),  # Flying effects → LP rockets palette
     ],
 }
 

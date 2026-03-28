@@ -29,7 +29,7 @@ from PIL import Image
 
 from mvc2_data.characters import (
     CHARACTERS, BUTTON_NAMES, PLAYABLE_CHARS,
-    EXTRA_BODY_BUTTON_SLOTS, EXTRAS_BODY_ENTRIES,
+    EXTRA_BODY_BUTTON_SLOTS, EXTRAS_BODY_ENTRIES, EXTRAS_SLOT_ENTRIES,
     palette_rows, palette_slot_map, safe_name,
 )
 from mvc2_data.steam import (
@@ -695,6 +695,21 @@ def main():
                         if cache_key not in lum_cache:
                             lum_cache[cache_key] = adjust_luminance(colors, lum)
                         colors = lum_cache[cache_key]
+                    write_palette_at(rom, cid, entry_idx, colors)
+
+            # Write extras derived from specific palette slots (e.g. rockets)
+            if any_applied and not args.dry_run and cid in EXTRAS_SLOT_ENTRIES:
+                slot_cache = {}
+                for entry_idx, btn_idx, segments in EXTRAS_SLOT_ENTRIES[cid]:
+                    pal_btn = btn_idx if btn_idx is not None else 0
+                    colors = [(0, 0, 0)] * 16
+                    for seg_start, seg_end, src_slot in segments:
+                        key = (pal_btn, src_slot)
+                        if key not in slot_cache:
+                            slot_cache[key] = read_palette(
+                                rom, cid, pal_btn, src_slot)
+                        colors[seg_start:seg_end] = (
+                            slot_cache[key][seg_start:seg_end])
                     write_palette_at(rom, cid, entry_idx, colors)
 
     print()
