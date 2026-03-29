@@ -404,12 +404,31 @@ def do_gallery_download(skins_dir):
     if skip_list:
         print(f"Rejected skins: {len(skip_list)} (from gallery verdicts)")
 
-    print("Downloading archive (this may take a while)...")
+    print("Downloading archive...")
     try:
         response = urllib.request.urlopen(SKINS_REPO_ZIP)
-        zip_data = response.read()
+        total = int(response.headers.get("Content-Length", 0))
+        chunk_size = 256 * 1024  # 256 KB chunks
+        chunks = []
+        downloaded = 0
+        while True:
+            chunk = response.read(chunk_size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            downloaded += len(chunk)
+            if total:
+                pct = downloaded / total * 100
+                bar_len = 40
+                filled = int(bar_len * downloaded // total)
+                bar = "█" * filled + "░" * (bar_len - filled)
+                print(f"\r  [{bar}] {pct:5.1f}% — {downloaded / 1024 / 1024:.1f} / {total / 1024 / 1024:.1f} MB", end="", flush=True)
+            else:
+                print(f"\r  Downloaded {downloaded / 1024 / 1024:.1f} MB...", end="", flush=True)
+        print()  # newline after progress bar
+        zip_data = b"".join(chunks)
     except Exception as e:
-        print(f"Error downloading: {e}")
+        print(f"\nError downloading: {e}")
         return False
 
     print(f"Downloaded {len(zip_data) / 1024 / 1024:.1f} MB")
