@@ -597,14 +597,6 @@ def main():
     # Backup original ARC
     backup_path = arc_path + BACKUP_SUFFIX
     need_backup = not os.path.isfile(backup_path) or args.force_backup
-    if not need_backup and os.path.isfile(backup_path):
-        # Detect stale backup: if game was reinstalled, the arc will be
-        # newer than the backup. Recreate backup from the fresh install.
-        arc_mtime = os.path.getmtime(arc_path)
-        bak_mtime = os.path.getmtime(backup_path)
-        if arc_mtime > bak_mtime:
-            need_backup = True
-            print("Detected newer game file (reinstall?) — refreshing backup")
     if need_backup:
         if not args.dry_run:
             shutil.copy2(arc_path, backup_path)
@@ -756,10 +748,6 @@ def main():
     else:
         print(f"Writing modified archive...")
         write_arc(arc_path, rom)
-        # Touch backup so its mtime stays newer than the modified arc.
-        # Without this, the next run would see arc newer than backup and
-        # overwrite the clean backup with randomized data.
-        os.utime(backup_path)
         # Save assignment log so user can check what was applied
         with open(LAST_RUN_LOG, "w") as f:
             f.write("\n".join(run_log) + "\n")

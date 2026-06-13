@@ -145,6 +145,12 @@ ARC_TYPE_HASH = 0x21D3D8A7
 IBIS_MAGIC = b"IBIS"
 EXPECTED_ROM_SIZE = 112_635_968
 
+# Minimum ROM size: highest palette offset + all its entries (32 bytes each)
+_MIN_ROM_SIZE = max(
+    STEAM_PALETTE_OFFSETS[cid] + TOTAL_PALETTE_COUNT[cid] * 32
+    for cid in STEAM_PALETTE_OFFSETS
+)
+
 
 def read_arc(arc_path):
     """Read a game_50.arc file and decompress the ROM.
@@ -210,10 +216,14 @@ def validate_rom(rom):
     """Check that decompressed ROM data looks correct."""
     if rom[:4] != IBIS_MAGIC:
         raise ValueError(f"ROM missing IBIS header (got {rom[:4]!r})")
-    if len(rom) < EXPECTED_ROM_SIZE:
+    if len(rom) < _MIN_ROM_SIZE:
         raise ValueError(
-            f"ROM too small: {len(rom):,} bytes (need at least {EXPECTED_ROM_SIZE:,})"
+            f"ROM too small: {len(rom):,} bytes "
+            f"(need at least {_MIN_ROM_SIZE:,} for palette data)"
         )
+    if len(rom) != EXPECTED_ROM_SIZE:
+        print(f"  Note: ROM size {len(rom):,} differs from vanilla "
+              f"({EXPECTED_ROM_SIZE:,}) — modded game detected")
 
 
 def palette_offset(char_id, button_idx, slot):
