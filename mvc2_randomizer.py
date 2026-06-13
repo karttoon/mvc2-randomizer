@@ -106,7 +106,23 @@ def load_config(config_path):
             print("  Edit this file to customize settings.\n")
         return {}
     with open(config_path, "r") as f:
-        data = json.load(f)
+        raw = f.read()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        lines = raw.splitlines()
+        print(f"\nError: Invalid JSON in config file: {config_path}")
+        print(f"  {e.msg} at line {e.lineno}, column {e.colno}\n")
+        if 1 <= e.lineno <= len(lines):
+            problem_line = lines[e.lineno - 1]
+            print(f"  Problem line: {problem_line.strip()}")
+            print()
+        print("  Common fixes:")
+        print('    - Wrap path values in double quotes: "game_path": "C:/Games/MvC2"')
+        print("    - Use forward slashes in paths:      C:/Games  not  C:\\Games")
+        print("    - Don't add a comma after the last value before }")
+        print(f"\n  You can delete {config_path} and re-run to regenerate it.\n")
+        raise SystemExit(1)
     return {k: v for k, v in data.items() if not k.startswith("_")}
 
 

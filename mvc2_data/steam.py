@@ -210,9 +210,9 @@ def validate_rom(rom):
     """Check that decompressed ROM data looks correct."""
     if rom[:4] != IBIS_MAGIC:
         raise ValueError(f"ROM missing IBIS header (got {rom[:4]!r})")
-    if len(rom) != EXPECTED_ROM_SIZE:
+    if len(rom) < EXPECTED_ROM_SIZE:
         raise ValueError(
-            f"Unexpected ROM size {len(rom):,} (expected {EXPECTED_ROM_SIZE:,})"
+            f"ROM too small: {len(rom):,} bytes (need at least {EXPECTED_ROM_SIZE:,})"
         )
 
 
