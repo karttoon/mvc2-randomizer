@@ -614,10 +614,12 @@ def main():
         print(f"Filter: {char_filter}")
     print()
 
-    # Read and decompress ROM — always from backup for clean state
+    # Read ROM from the live arc so non-palette mods (stages etc.) are preserved.
+    # Palette bytes are overwritten at absolute offsets, so prior randomization
+    # doesn't affect the result.
     if not args.dry_run:
         print("Reading game archive...")
-        rom = read_arc(backup_path)
+        rom = read_arc(arc_path)
         validate_rom(rom)
     else:
         rom = None
