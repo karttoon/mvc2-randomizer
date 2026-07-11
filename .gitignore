@@ -3,6 +3,13 @@ randomizer_config.json
 skin_locks.txt
 last_run.txt
 gallery_verdicts.json
+palette_state.json
+game_path.txt
 __pycache__/
 *.pyc
 .env
+
+# PyInstaller build output
+build/
+dist/
+*.exe

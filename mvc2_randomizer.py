@@ -16,11 +16,11 @@ See README.md for Steam setup instructions.
 """
 
 import argparse
+import hashlib
 import io
 import json
 import os
 import random
-import shutil
 import sys
 import zipfile
 import urllib.request
@@ -35,16 +35,19 @@ from mvc2_data.characters import (
 from mvc2_data.steam import (
     read_arc, write_arc, validate_rom,
     read_palette, write_palette, write_palette_at,
-    adjust_luminance, TOTAL_PALETTE_COUNT,
+    adjust_luminance, TOTAL_PALETTE_COUNT, STEAM_PALETTE_OFFSETS,
+    load_vanilla_palettes,
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "randomizer_config.json")
 DEFAULT_SKINS = os.path.join(SCRIPT_DIR, "skins")
 LAST_RUN_LOG = os.path.join(SCRIPT_DIR, "last_run.txt")
+# Tracks what this tool wrote so external edits (e.g. PalMod) can be detected
+# and protected instead of overwritten. See load_palette_state().
+PALETTE_STATE = os.path.join(SCRIPT_DIR, "palette_state.json")
 ARC_FILENAME = "game_50.arc"
 ARC_SUBPATH = os.path.join("arc", "pc", ARC_FILENAME)
-BACKUP_SUFFIX = ".bak"
 
 # Default Steam install path
 DEFAULT_STEAM_PATH = os.path.join(
@@ -316,18 +319,16 @@ def extract_png_palette(filepath):
 
 
 def assign_skins(png_files, num_buttons=6):
-    """Pick skins for 6 button slots via shuffle.
+    """Pick skins for button slots via shuffle.
 
-    Returns list of 6 filenames. If fewer than 6 skins, cycles through.
+    Returns up to num_buttons filenames with no repeats. If fewer skins than
+    buttons exist, only that many are returned — the caller restores vanilla
+    first, so the leftover buttons keep their stock palettes instead of
+    duplicating the small pool.
     """
-    if not png_files:
-        return []
     pool = list(png_files)
     random.shuffle(pool)
-    if len(pool) >= num_buttons:
-        return pool[:num_buttons]
-    # Cycle through available skins
-    return [pool[i % len(pool)] for i in range(num_buttons)]
+    return pool[:num_buttons]
 
 
 def apply_skin(rom, char_id, button_idx, skin_path):
@@ -376,14 +377,115 @@ def apply_skin(rom, char_id, button_idx, skin_path):
 
 
 
-def do_restore(arc_path):
-    """Restore game_50.arc from backup."""
-    backup = arc_path + BACKUP_SUFFIX
-    if not os.path.isfile(backup):
-        print(f"Error: No backup found at {backup}")
+# --------------------------------------------------------------------------
+# Palette state: protecting external edits (e.g. PalMod)
+#
+# palette_state.json records a hash of each character's palette block as this
+# tool last wrote it. On every run, a character whose block matches neither
+# vanilla nor our last write must have been edited by something else - that
+# character is "protected": skipped entirely (not randomized, not reset)
+# until the user unlocks it or resets it to vanilla.
+# --------------------------------------------------------------------------
+
+def load_palette_state():
+    state = {}
+    try:
+        if os.path.isfile(PALETTE_STATE):
+            with open(PALETTE_STATE, "r") as f:
+                state = json.load(f)
+    except Exception:
+        state = {}
+    state.setdefault("written", {})     # folder -> hash we last wrote
+    state.setdefault("protected", [])   # folders with detected external edits
+    state.setdefault("notified", [])    # protections the GUI already announced
+    return state
+
+
+def save_palette_state(state):
+    with open(PALETTE_STATE, "w") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+
+
+def block_hash(rom, cid):
+    """Hash of one character's palette block in the ROM."""
+    start = STEAM_PALETTE_OFFSETS[cid]
+    n = TOTAL_PALETTE_COUNT[cid] * 32
+    return hashlib.sha1(bytes(rom[start:start + n])).hexdigest()
+
+
+def vanilla_hashes(vanilla):
+    return {cid: hashlib.sha1(bytes(block)).hexdigest()
+            for cid, block in vanilla.items()}
+
+
+def reset_palettes(arc_path, char_id=None):
+    """Reset character palettes to their stock (vanilla) values - one
+    character if char_id is given, otherwise all of them.
+
+    Uses the small bundled vanilla_palettes.bin - no per-user game_50.arc backup
+    is needed, because the randomizer only ever changes palette bytes. Each
+    character's palettes are a contiguous ROM block (STEAM_PALETTE_OFFSETS[cid]
+    for TOTAL_PALETTE_COUNT[cid] * 32 bytes), written straight into the live arc.
+    Everything else in the arc (stage mods, other edits) is left untouched.
+    """
+    try:
+        vanilla = load_vanilla_palettes()
+    except Exception as e:
+        print(f"Error: bundled vanilla palette data unavailable ({e}).")
         return False
-    shutil.copy2(backup, arc_path)
-    print(f"Restored {arc_path} from backup")
+    targets = ({char_id: STEAM_PALETTE_OFFSETS[char_id]} if char_id is not None
+               else STEAM_PALETTE_OFFSETS)
+    who = CHARACTERS[char_id] if char_id is not None else "all characters"
+    print(f"Resetting palettes to vanilla for {who} (other game data preserved)...")
+    rom = read_arc(arc_path)          # live file - keeps non-palette changes
+    validate_rom(rom)
+    for cid, start in targets.items():
+        block = vanilla[cid]
+        rom[start:start + len(block)] = block
+    write_arc(arc_path, rom)
+    # Reset characters are vanilla again: clear their protection + write record.
+    state = load_palette_state()
+    for cid in targets:
+        folder = CHAR_ID_TO_FOLDER.get(cid, safe_name(CHARACTERS[cid]))
+        state["written"].pop(folder, None)
+        if folder in state["protected"]:
+            state["protected"].remove(folder)
+        if folder in state["notified"]:
+            state["notified"].remove(folder)
+    save_palette_state(state)
+    print(f"Reset palettes for {len(targets)} character(s).")
+    return True
+
+
+def unprotect_palettes(arc_path, char_id=None):
+    """Allow the randomizer to overwrite protected characters again.
+
+    Adopts each character's CURRENT palettes as if this tool wrote them, so
+    the next run randomizes right over the external edits. One character if
+    char_id is given, otherwise every currently-protected character.
+    """
+    state = load_palette_state()
+    if char_id is not None:
+        folders = [CHAR_ID_TO_FOLDER.get(char_id, safe_name(CHARACTERS[char_id]))]
+    else:
+        folders = list(state["protected"])
+    if not folders:
+        print("No protected characters - nothing to unlock.")
+        return True
+    rom = read_arc(arc_path)
+    validate_rom(rom)
+    folder_to_cid = {v: k for k, v in CHAR_ID_TO_FOLDER.items()}
+    for folder in folders:
+        cid = folder_to_cid.get(folder)
+        if cid is None:
+            continue
+        state["written"][folder] = block_hash(rom, cid)
+        if folder in state["protected"]:
+            state["protected"].remove(folder)
+        if folder in state["notified"]:
+            state["notified"].remove(folder)
+        print(f"Unlocked {folder} - next randomize may overwrite its palettes.")
+    save_palette_state(state)
     return True
 
 
@@ -504,12 +606,18 @@ def build_parser():
     p.add_argument("--seed", type=int, help="Random seed for reproducible results")
     p.add_argument("--dry-run", action="store_true",
                    help="Show assignments without modifying files")
-    p.add_argument("--restore", action="store_true",
-                   help="Restore game_50.arc from backup")
+    p.add_argument("--reset-palettes", "--restore", dest="reset_palettes",
+                   action="store_true",
+                   help="Reset character palettes to vanilla (keeps other game data); "
+                        "combine with --character to reset just one")
+    p.add_argument("--unprotect", action="store_true",
+                   help="Unlock protected characters (ones with external edits, e.g. "
+                        "PalMod) so the randomizer may overwrite them; combine with "
+                        "--character to unlock just one")
+    p.add_argument("--quiet", action="store_true",
+                   help="Suppress the per-character assignment list (still written to last_run.txt)")
     p.add_argument("--gallery-download", action="store_true",
                    help="Download/update skins from gallery (merges new, keeps existing)")
-    p.add_argument("--force-backup", action="store_true",
-                   help="Recreate backup from current game file (use after reinstall)")
     p.add_argument("--list-characters", action="store_true",
                    help="List all valid character names")
     return p
@@ -562,9 +670,26 @@ def main():
         print("Use --game to specify the game install directory")
         return 1
 
+    # Resolve --character filter (also scopes --reset-palettes / --unprotect)
+    char_filter = args.character
+    char_filter_id = None
+    if char_filter:
+        result = resolve_character(char_filter)
+        if result[0] is None:
+            print(f"Error: {result[1]}")
+            return 1
+        char_filter_id, resolved_name = result
+        if resolved_name.lower() != char_filter.lower():
+            print(f"Matched \"{char_filter}\" -> {resolved_name}")
+        char_filter = resolved_name
+
     # Handle --restore
-    if args.restore:
-        return 0 if do_restore(arc_path) else 1
+    if args.reset_palettes:
+        return 0 if reset_palettes(arc_path, char_filter_id) else 1
+
+    # Handle --unprotect
+    if args.unprotect:
+        return 0 if unprotect_palettes(arc_path, char_filter_id) else 1
 
     # Validate skins directory
     if not os.path.isdir(skins_dir):
@@ -580,30 +705,6 @@ def main():
     if seed is not None:
         random.seed(seed)
         print(f"Using seed: {seed}")
-
-    # Resolve --character filter
-    char_filter = args.character
-    char_filter_id = None
-    if char_filter:
-        result = resolve_character(char_filter)
-        if result[0] is None:
-            print(f"Error: {result[1]}")
-            return 1
-        char_filter_id, resolved_name = result
-        if resolved_name.lower() != char_filter.lower():
-            print(f"Matched \"{char_filter}\" -> {resolved_name}")
-        char_filter = resolved_name
-
-    # Backup original ARC
-    backup_path = arc_path + BACKUP_SUFFIX
-    need_backup = not os.path.isfile(backup_path) or args.force_backup
-    if need_backup:
-        if not args.dry_run:
-            shutil.copy2(arc_path, backup_path)
-            print(f"Backup created: {backup_path}")
-            print(f"  (Unmodified copy of {ARC_FILENAME} — use --restore to revert)")
-        else:
-            print(f"[dry-run] Would backup {arc_path}")
 
     print("=" * 60)
     print("MvC2 Palette Randomizer")
@@ -628,6 +729,24 @@ def main():
     total_locked = 0
     run_log = []  # collected for last_run.txt
 
+    rejected = load_rejected_skins()   # palettes the user marked 'delete' — skip them
+
+    # Vanilla palette data, used when a character has fewer palettes than
+    # buttons: their block is reset to stock first so leftover slots show the
+    # default colors instead of accumulating past runs' assignments.
+    try:
+        vanilla = load_vanilla_palettes()
+    except Exception:
+        vanilla = None
+
+    # External-edit protection (PalMod etc.): a character whose current block
+    # matches neither vanilla nor what we last wrote was edited by something
+    # else - leave it completely alone and tell the user.
+    state = load_palette_state()
+    van_hash = vanilla_hashes(vanilla) if vanilla else {}
+    protected_kept = []     # previously-protected characters skipped this run
+    newly_protected = []    # external edits detected on this run
+
     for cid in sorted(PLAYABLE_CHARS, key=lambda c: CHARACTERS[c]):
         char_name = CHARACTERS[cid]
         sname = safe_name(char_name)
@@ -637,15 +756,43 @@ def main():
         if char_filter_id is not None and cid != char_filter_id:
             continue
 
-        # Find skins folder
-        skin_folder = os.path.join(skins_dir, folder_name)
-        if not os.path.isdir(skin_folder):
+        # Skip characters with protected (externally edited) palettes
+        if folder_name in state["protected"]:
+            protected_kept.append(folder_name)
+            run_log.append(char_name)
+            run_log.append("  (protected - existing edits kept)")
+            run_log.append("")
             continue
+        if rom is not None and cid in van_hash:
+            cur = block_hash(rom, cid)
+            if cur != van_hash[cid] and cur != state["written"].get(folder_name):
+                state["protected"].append(folder_name)
+                newly_protected.append(folder_name)
+                run_log.append(char_name)
+                run_log.append("  (existing edits detected - now protected, kept as-is)")
+                run_log.append("")
+                continue
 
-        # Collect PNG files
-        pngs = sorted(f for f in os.listdir(skin_folder) if f.lower().endswith(".png"))
-        if not pngs:
-            continue
+        # Collect PNG files (excluding palettes the user rejected)
+        skin_folder = os.path.join(skins_dir, folder_name)
+        pngs = []
+        if os.path.isdir(skin_folder):
+            pngs = sorted(f for f in os.listdir(skin_folder)
+                          if f.lower().endswith(".png") and f.lower() not in rejected)
+
+        # Fewer palettes than buttons (possibly none): reset this character to
+        # vanilla first, then fill what we can.
+        if len(pngs) < len(BUTTON_NAMES):
+            if not args.dry_run and vanilla and cid in vanilla:
+                start = STEAM_PALETTE_OFFSETS[cid]
+                block = vanilla[cid]
+                rom[start:start + len(block)] = block
+                state["written"].pop(folder_name, None)   # vanilla = clean slate
+            if not pngs:
+                run_log.append(char_name)
+                run_log.append("  (no palettes - reset to vanilla)")
+                run_log.append("")
+                continue
 
         # Check which buttons are locked vs randomizable
         locked_buttons = {}   # btn_idx → filename
@@ -665,7 +812,10 @@ def main():
             else:
                 random_buttons.append(btn_idx)
 
-        # Assign random skins to unlocked buttons
+        # Assign random skins to unlocked buttons. With a short pool, shuffle
+        # which buttons get them so the vanilla slots vary run to run.
+        if len(pngs) < len(random_buttons):
+            random.shuffle(random_buttons)
         random_assignments = assign_skins(pngs, len(random_buttons)) if random_buttons else []
 
         btn_log = []
@@ -697,12 +847,17 @@ def main():
                             any_applied = True
                         else:
                             btn_log.append(f"  {btn_name}: [failed] {skin_file}")
+                else:
+                    # Short pool — this button keeps its vanilla palette.
+                    btn_log.append(f"  {btn_name}: (vanilla)")
 
         if btn_log:
-            print(f"{char_name}")
+            if not args.quiet:
+                print(f"{char_name}")
             run_log.append(char_name)
             for line in btn_log:
-                print(line)
+                if not args.quiet:
+                    print(line)
                 run_log.append(line)
             run_log.append("")
             total_assigned += 1
@@ -741,7 +896,22 @@ def main():
                             slot_cache[key][seg_start:seg_end])
                     write_palette_at(rom, cid, entry_idx, colors)
 
+            # Remember what we wrote so later external edits can be detected.
+            if not args.dry_run:
+                state["written"][folder_name] = block_hash(rom, cid)
+
     print()
+
+    if newly_protected:
+        print("NOTICE: Existing palette edits (PalMod or similar) detected for:")
+        print("  " + ", ".join(newly_protected))
+        print("  These characters are now PROTECTED - the randomizer will leave")
+        print("  them alone. To include them again, reset them to vanilla or")
+        print("  unlock them (app: Randomize tab / CLI: --unprotect).")
+        print()
+    if protected_kept:
+        print(f"Protected characters kept as-is: {', '.join(protected_kept)}")
+        print()
 
     if args.dry_run:
         print(f"[dry-run] Would randomize {total_assigned} characters"
@@ -750,6 +920,7 @@ def main():
     else:
         print(f"Writing modified archive...")
         write_arc(arc_path, rom)
+        save_palette_state(state)
         # Save assignment log so user can check what was applied
         with open(LAST_RUN_LOG, "w") as f:
             f.write("\n".join(run_log) + "\n")

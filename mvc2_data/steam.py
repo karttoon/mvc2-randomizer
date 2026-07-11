@@ -1,5 +1,6 @@
 """Steam ARC file handling and ROM palette read/write for MvC2."""
 
+import os
 import struct
 import zlib
 
@@ -224,6 +225,30 @@ def validate_rom(rom):
     if len(rom) != EXPECTED_ROM_SIZE:
         print(f"  Note: ROM size {len(rom):,} differs from vanilla "
               f"({EXPECTED_ROM_SIZE:,}) — modded game detected")
+
+
+VANILLA_PALETTES_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "vanilla_palettes.bin")
+
+
+def load_vanilla_palettes():
+    """Return {char_id: bytes} of the stock palette block for each character.
+
+    The blob is the concatenation, in char-id order, of each character's
+    contiguous palette region (TOTAL_PALETTE_COUNT[cid] * 32 bytes). This is the
+    small, bundled replacement for keeping a full game_50.arc backup — the
+    randomizer only ever changes palette bytes, so these are all that's needed
+    to reset the game to stock colors.
+    """
+    with open(VANILLA_PALETTES_FILE, "rb") as fh:
+        blob = fh.read()
+    out = {}
+    pos = 0
+    for cid in sorted(STEAM_PALETTE_OFFSETS):
+        length = TOTAL_PALETTE_COUNT[cid] * 32
+        out[cid] = blob[pos:pos + length]
+        pos += length
+    return out
 
 
 def palette_offset(char_id, button_idx, slot):
