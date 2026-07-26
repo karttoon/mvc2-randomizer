@@ -812,11 +812,15 @@ def main():
             else:
                 random_buttons.append(btn_idx)
 
-        # Assign random skins to unlocked buttons. With a short pool, shuffle
-        # which buttons get them so the vanilla slots vary run to run.
-        if len(pngs) < len(random_buttons):
+        # Assign random skins to unlocked buttons. Files already used by locks
+        # are excluded so a locked palette can't also land on a random slot.
+        # With a short pool, shuffle which buttons get skins so the vanilla
+        # slots vary run to run.
+        locked_files = {f.lower() for f in locked_buttons.values()}
+        pool = [f for f in pngs if f.lower() not in locked_files]
+        if len(pool) < len(random_buttons):
             random.shuffle(random_buttons)
-        random_assignments = assign_skins(pngs, len(random_buttons)) if random_buttons else []
+        random_assignments = assign_skins(pool, len(random_buttons)) if random_buttons else []
 
         btn_log = []
         any_applied = False
