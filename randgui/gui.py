@@ -14,7 +14,7 @@ import os, sys, queue, threading, traceback
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
-from PIL import ImageTk
+from PIL import Image as PILImage, ImageDraw, ImageTk
 
 import config
 import randomize
@@ -125,6 +125,7 @@ class App:
     KEEP_COLOR = "#2f8f2f"
     REJECT_COLOR = "#c53a3a"
     NEUTRAL_COLOR = "#777777"
+    SELECT_COLOR = "#2b6cb0"      # grid: palettes picked for comparison
 
     def _tab_palettes(self, nb):
         t = ttk.Frame(nb, padding=10); nb.add(t, text="2. Palette Gallery")
@@ -141,9 +142,15 @@ class App:
                         command=self._show_view).pack(side="left")
         ttk.Radiobutton(top, text="Grid", value="grid", variable=self.view_var,
                         command=self._show_view).pack(side="left", padx=(4, 0))
+        self.sortcol_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text="Sort by color", variable=self.sortcol_var,
+                        command=self._on_char_change).pack(side="left", padx=(10, 0))
         self.unrev_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(top, text="Unreviewed only", variable=self.unrev_var,
                         command=self._on_unrev_toggle).pack(side="left", padx=(12, 0))
+        self.cmp_btn = ttk.Button(top, text="Compare selected...", command=self.on_compare)
+        self.cmp_btn.pack(side="left", padx=(12, 0))
+        self._action_widgets.append(self.cmp_btn)
         dl = ttk.Button(top, text="Download / Update", command=self.on_download)
         dl.pack(side="right"); self._action_widgets.append(dl)
 
@@ -177,8 +184,10 @@ class App:
         self._pw = pw
 
         left = ttk.Frame(pw)
+        # selectmode extended: Ctrl/Shift-click builds a set for "Compare selected"
         self.file_list = tk.Listbox(left, width=32, activestyle="dotbox",
-                                    exportselection=False, font=("Consolas", 9))
+                                    exportselection=False, font=("Consolas", 9),
+                                    selectmode="extended")
         lsb = ttk.Scrollbar(left, orient="vertical", command=self.file_list.yview)
         self.file_list.configure(yscrollcommand=lsb.set)
         lsb.pack(side="right", fill="y")
@@ -194,6 +203,7 @@ class App:
         self.file_list.bind("<N>", lambda e: self._set_verdict(palettes.REJECT))
         self.file_list.bind("<c>", lambda e: self._clear_verdict())
         self.file_list.bind("<C>", lambda e: self._clear_verdict())
+        self.file_list.bind("<Return>", lambda e: self.on_compare())
         pw.add(left, weight=0)       # holds its natural width; still draggable
 
         right = ttk.Frame(pw)
@@ -300,6 +310,7 @@ class App:
         else:
             self.image_view.pack(fill="both", expand=True)
             self.file_list.focus_set()
+        self._update_compare_btn()
 
     def _populate_chars(self):
         """Full refresh of the dropdown, recomputing per-character unreviewed counts."""
@@ -353,6 +364,8 @@ class App:
         verdicts = palettes.load_verdicts()
         self.pal_files = (palettes.list_filtered(char, self.unrev_var.get(), verdicts)
                           if char else [])
+        if char and self.sortcol_var.get():
+            self.pal_files.sort(key=lambda f: palettes.color_sort_key(char, f))
         self.file_list.delete(0, "end")
         for fn in self.pal_files:
             self.file_list.insert("end", fn)
@@ -394,8 +407,18 @@ class App:
                 return
 
     def _cur_index(self):
+        """Index of the palette shown in the preview. With multi-select, the
+        'active' item (the one last clicked / keyboard cursor) is previewed."""
+        if not self.pal_files:
+            return None
+        try:
+            i = int(self.file_list.index("active"))
+        except (tk.TclError, ValueError):
+            i = -1
+        if 0 <= i < len(self.pal_files):
+            return i
         sel = self.file_list.curselection()
-        return sel[0] if sel else (0 if self.pal_files else None)
+        return sel[0] if sel else 0
 
     def _nav(self, delta):
         if not self.pal_files:
@@ -456,6 +479,147 @@ class App:
         self.file_list.focus_set()
         return "break"
 
+    # ---- comparison view ----
+    MAX_COMPARE = 12
+
+    def on_compare(self):
+        """Open a side-by-side comparison of the selected palettes; the user
+        clicks a winner, which is kept while the rest are rejected."""
+        files, first_idx = self._compare_selection()
+        if len(files) < 2:
+            messagebox.showinfo(
+                "Compare palettes",
+                "Select two or more palettes first.\n\n"
+                "List: Ctrl-click to add one, Shift-click for a range.\n"
+                "Grid: click thumbnails to toggle them (blue border).")
+            return "break"
+        if len(files) > self.MAX_COMPARE:
+            messagebox.showinfo(
+                "Compare palettes",
+                f"That's {len(files)} palettes - please compare "
+                f"{self.MAX_COMPARE} or fewer at a time.")
+            return "break"
+        char = self._cur_char
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"Compare {len(files)} palettes - {char}")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        W, H = int(sw * 0.85), int(sh * 0.85)
+        dlg.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
+
+        ttk.Label(dlg, padding=(10, 8, 10, 0), foreground="#555",
+                  text="Click every palette you want to KEEP (click again to "
+                       "unpick) - the rest will be rejected.").pack(anchor="w")
+
+        # Bottom buttons (created first so the grid callbacks can reference them)
+        btnrow = ttk.Frame(dlg, padding=10)
+        btnrow.pack(side="bottom", fill="x")
+        picked = set()
+
+        def close():
+            canvas.unbind_all("<MouseWheel>")
+            dlg.destroy()
+
+        def apply():
+            if not picked:
+                return
+            close()
+            winners = [f for f in files if f in picked]
+            losers = [f for f in files if f not in picked]
+            self._apply_compare(char, winners, losers, first_idx)
+
+        keep_btn = ttk.Button(btnrow, text="Keep... (click palettes above first)",
+                              state="disabled", command=apply)
+        keep_btn.pack(side="right")
+        ttk.Button(btnrow, text="Cancel", command=close).pack(side="right", padx=(0, 8))
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.bind("<Escape>", lambda e: close())
+
+        # Scrollable thumbnail grid
+        body = ttk.Frame(dlg)
+        body.pack(fill="both", expand=True, padx=10, pady=6)
+        canvas = tk.Canvas(body, highlightthickness=0, background="#2d2d2d")
+        vsb = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, background="#2d2d2d")
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Enter>", lambda e: canvas.bind_all(
+            "<MouseWheel>", lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        cols = 2 if len(files) <= 4 else 3
+        tw = max(220, (W - 80) // cols - 24)
+        cells = {}
+
+        def refresh_btn():
+            n = len(picked)
+            if n:
+                keep_btn.config(state="normal",
+                                text=f"Keep {n} - reject the other {len(files) - n}")
+            else:
+                keep_btn.config(state="disabled",
+                                text="Keep... (click palettes above first)")
+
+        def choose(fn):
+            if fn in picked:
+                picked.discard(fn)
+            else:
+                picked.add(fn)
+            cell, cap = cells[fn]
+            on = fn in picked
+            color = self.KEEP_COLOR if on else "#555555"
+            cell.config(highlightbackground=color, highlightcolor=color)
+            cap.config(foreground="#7fdc7f" if on else "#cccccc",
+                       text=(f"KEEP   {fn}" if on else fn),
+                       font=("Consolas", 8, "bold" if on else "normal"))
+            refresh_btn()
+
+        imgs = []
+        for i, fn in enumerate(files):
+            cell = tk.Frame(inner, highlightthickness=4, background="#2d2d2d",
+                            highlightbackground="#555555", highlightcolor="#555555")
+            cell.grid(row=i // cols, column=i % cols, padx=8, pady=8)
+            try:
+                img = ImageTk.PhotoImage(palettes.thumbnail(char, fn, width=tw))
+            except Exception:
+                cell.destroy()
+                continue
+            imgs.append(img)
+            pic = tk.Label(cell, image=img, bd=0)
+            pic.pack()
+            cap = tk.Label(cell, text=fn, font=("Consolas", 8),
+                           background="#2d2d2d", foreground="#cccccc")
+            cap.pack(fill="x")
+            for w in (cell, pic, cap):
+                w.bind("<Button-1>", lambda e, f=fn: choose(f))
+            cells[fn] = (cell, cap)
+        dlg._imgs = imgs          # keep PhotoImage refs alive
+        return "break"
+
+    def _apply_compare(self, char, winners, losers, first_idx):
+        """Record the comparison outcome: winners kept, losers rejected."""
+        v = palettes.load_verdicts()
+        for fn, verdict in ([(f, palettes.KEEP) for f in winners]
+                            + [(f, palettes.REJECT) for f in losers]):
+            key = palettes.key_for(char, fn)
+            if v.get(key) is None and self._unrev.get(char):
+                self._unrev[char] -= 1
+            v[key] = verdict
+        palettes.save_verdicts(v)
+        self._rebuild_char_values()
+        self.logln(f"Compare: kept {len(winners)} ({', '.join(winners)}), "
+                   f"rejected {len(losers)} other(s).")
+        self._load_char(char, land=first_idx)
+        if self.unrev_var.get() and not self.pal_files:
+            self._advance_to_unreviewed_char()
+        self.file_list.focus_set()
+
     def _set_verdict(self, verdict):
         i = self._cur_index()
         if i is None or not self.pal_files:
@@ -491,13 +655,16 @@ class App:
         self.file_list.focus_set()
         return "break"
 
-    # ---- grid (read-only overview) ----
+    # ---- grid (overview + click-to-select for comparison) ----
     def _load_grid(self):
         if not hasattr(self, "gal_inner"):
             return
         for w in self.gal_inner.winfo_children():
             w.destroy()
         self._thumb_refs = []
+        self._grid_sel = set()        # filenames toggled for comparison
+        self._grid_cells = {}         # filename -> (cell, pic label, pil thumb, PhotoImage, verdict color)
+        self._grid_sel_imgs = {}      # filename -> highlighted PhotoImage (built on demand)
         char = self._cur_char
         if char:
             cols = self.GRID_COLS
@@ -505,7 +672,8 @@ class App:
             self._grid_w = cw
             tw = max(110, (cw - (cols + 1) * 10) // cols)   # fill the width
             verdicts = palettes.load_verdicts()
-            for i, fn in enumerate(palettes.list_filtered(char, self.unrev_var.get(), verdicts)):
+            # pal_files carries the active ordering (alphabetical or color-sorted)
+            for i, fn in enumerate(self.pal_files):
                 v = verdicts.get(palettes.key_for(char, fn))
                 color = (self.REJECT_COLOR if v == palettes.REJECT
                          else self.KEEP_COLOR if v == palettes.KEEP else self.NEUTRAL_COLOR)
@@ -513,12 +681,63 @@ class App:
                                 highlightbackground=color, highlightcolor=color)
                 cell.grid(row=i // cols, column=i % cols, padx=4, pady=4)
                 try:
-                    img = ImageTk.PhotoImage(palettes.thumbnail(char, fn, width=tw))
+                    pil = palettes.thumbnail(char, fn, width=tw)
+                    img = ImageTk.PhotoImage(pil)
                 except Exception:
                     cell.destroy(); continue
                 self._thumb_refs.append(img)
-                tk.Label(cell, image=img, bd=0).pack()
+                pic = tk.Label(cell, image=img, bd=0)
+                pic.pack()
+                for w in (cell, pic):    # click toggles comparison selection
+                    w.bind("<Button-1>", lambda e, f=fn: self._grid_toggle(f))
+                self._grid_cells[fn] = (cell, pic, pil, img, color)
         self.gal_canvas.yview_moveto(0)
+        self._update_compare_btn()
+
+    def _selected_thumb(self, fn):
+        """Highlighted variant of a grid thumbnail: blue tint + checkmark badge."""
+        if fn not in self._grid_sel_imgs:
+            pil = self._grid_cells[fn][2]
+            tint = PILImage.new("RGB", pil.size, (43, 108, 176))
+            sel = PILImage.blend(pil, tint, 0.35)
+            d = ImageDraw.Draw(sel)
+            r = max(10, min(pil.size) // 10)
+            cx, cy = pil.width - r - 6, r + 6
+            lw = max(2, r // 4)
+            d.ellipse([cx - r, cy - r, cx + r, cy + r],
+                      fill=(43, 108, 176), outline="white", width=lw)
+            d.line([(cx - r // 2, cy), (cx - r // 6, cy + r // 2),
+                    (cx + r // 2, cy - r // 2)], fill="white", width=lw)
+            self._grid_sel_imgs[fn] = ImageTk.PhotoImage(sel)
+        return self._grid_sel_imgs[fn]
+
+    def _grid_toggle(self, fn):
+        """Toggle a grid thumbnail in/out of the comparison selection."""
+        cell, pic, pil, img, vcolor = self._grid_cells[fn]
+        if fn in self._grid_sel:
+            self._grid_sel.discard(fn)
+            pic.config(image=img)
+            cell.config(highlightbackground=vcolor, highlightcolor=vcolor)
+        else:
+            self._grid_sel.add(fn)
+            pic.config(image=self._selected_thumb(fn))
+            cell.config(highlightbackground=self.SELECT_COLOR,
+                        highlightcolor=self.SELECT_COLOR)
+        self._update_compare_btn()
+
+    def _update_compare_btn(self):
+        n = len(getattr(self, "_grid_sel", ())) if self.view_var.get() == "grid" else 0
+        self.cmp_btn.config(text=f"Compare selected ({n})..." if n
+                            else "Compare selected...")
+
+    def _compare_selection(self):
+        """(files, first_index) chosen for comparison in the active view."""
+        if self.view_var.get() == "grid":
+            files = [f for f in self.pal_files if f in getattr(self, "_grid_sel", ())]
+        else:
+            files = [self.pal_files[i] for i in self.file_list.curselection()]
+        first = self.pal_files.index(files[0]) if files else 0
+        return files, first
 
     # ---- removal ----
     def on_remove_rejected(self):

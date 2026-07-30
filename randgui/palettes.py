@@ -7,7 +7,7 @@ Reads/writes the same gallery_verdicts.json the CLI engine honours:
 downloads). Files stay on disk until explicitly removed, so rejecting is
 reversible. Saved with indent=1, sort_keys=True to match gallery.py.
 """
-import os, json
+import os, json, colorsys
 
 from PIL import Image
 
@@ -86,6 +86,49 @@ def load_scaled(char, filename, max_w, max_h, bg=(45, 45, 45)):
     canvas = Image.new("RGBA", im.size, bg + (255,))
     canvas.alpha_composite(im)
     return canvas.convert("RGB")
+
+
+_color_key_cache = {}   # (char, filename) -> (mtime, key)
+
+
+def color_sort_key(char, filename):
+    """Perceptual sort key so similar-looking palettes end up adjacent.
+
+    The gallery sheets are index-standardized, so palette index N is the same
+    body part in every file for a character. The dominant color = the color of
+    the body-row index (1-15) covering the most pixels - for most characters
+    that's the primary suit/armor color. Achromatic palettes (silver/black/
+    white) sort together first by lightness; colored ones by hue band, then
+    lightness. Unreadable files sort last.
+    """
+    path = os.path.join(config.SKINS, char, filename)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return (2, 0, 0.0, 0.0)
+    hit = _color_key_cache.get((char, filename))
+    if hit and hit[0] == mtime:
+        return hit[1]
+    key = (2, 0, 0.0, 0.0)
+    try:
+        with Image.open(path) as im:
+            if im.mode != "P":
+                im = im.convert("P", palette=Image.ADAPTIVE)
+            hist = im.histogram()
+            pal = im.getpalette() or []
+        counts = hist[1:16]                      # body-row indices only
+        if any(counts) and len(pal) >= 48:
+            dom = 1 + max(range(15), key=lambda i: counts[i])
+            r, g, b = pal[dom * 3: dom * 3 + 3]
+            h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+            if s < 0.16 or v < 0.14:
+                key = (0, 0, v, s)               # grays/metals: by lightness
+            else:
+                key = (1, int(h * 16), v, s)     # hue band, then lightness
+    except Exception:
+        pass
+    _color_key_cache[(char, filename)] = (mtime, key)
+    return key
 
 
 def list_filtered(char, unreviewed_only, verdicts):
