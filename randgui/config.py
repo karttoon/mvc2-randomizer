@@ -36,6 +36,10 @@ LOCKS_TXT = os.path.join(DATA, "skin_locks.txt")
 LAST_RUN = os.path.join(DATA, "last_run.txt")
 VERDICTS_JSON = os.path.join(DATA, "gallery_verdicts.json")
 PALETTE_STATE = os.path.join(DATA, "palette_state.json")
+STAGES = os.path.join(DATA, "stages")
+STAGE_VERDICTS_JSON = os.path.join(DATA, "stage_verdicts.json")
+STAGE_STATE = os.path.join(DATA, "stage_state.json")
+STAGE_LOCKS_JSON = os.path.join(DATA, "stage_locks.json")
 
 # MvC2 Fighting Collection (Steam) App ID — same one MixConverter uses.
 APPID = "2634890"

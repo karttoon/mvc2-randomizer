@@ -1,0 +1,226 @@
+{
+ "Akuma": {
+  "primary": 9,
+  "secondary": 2
+ },
+ "Amingo": {
+  "primary": 6,
+  "secondary": 3
+ },
+ "Anakaris": {
+  "primary": 2,
+  "secondary": 8
+ },
+ "BB_Hood": {
+  "primary": 14,
+  "secondary": 4
+ },
+ "Blackheart": {
+  "primary": 2,
+  "secondary": 9
+ },
+ "Cable": {
+  "primary": 1,
+  "secondary": 8
+ },
+ "Cammy": {
+  "primary": 8,
+  "secondary": 2
+ },
+ "Captain_America": {
+  "primary": 4,
+  "secondary": 8
+ },
+ "Captain_Commando": {
+  "primary": 2,
+  "secondary": 6
+ },
+ "Charlie_Nash": {
+  "primary": 12,
+  "secondary": 8
+ },
+ "Chun-Li": {
+  "primary": 12,
+  "secondary": 4
+ },
+ "Colossus": {
+  "primary": 5,
+  "secondary": 9
+ },
+ "Cyclops": {
+  "primary": 3,
+  "secondary": 7
+ },
+ "Dan": {
+  "primary": 9,
+  "secondary": 2
+ },
+ "Dhalsim": {
+  "primary": 2,
+  "secondary": 8
+ },
+ "Doctor_Doom": {
+  "primary": 4,
+  "secondary": 11
+ },
+ "Felicia": {
+  "primary": 11,
+  "secondary": 6
+ },
+ "Gambit": {
+  "primary": 3,
+  "secondary": 8
+ },
+ "Guile": {
+  "primary": 10,
+  "secondary": 3
+ },
+ "Hayato": {
+  "primary": 6,
+  "secondary": 10
+ },
+ "Hulk": {
+  "primary": 2,
+  "secondary": 8
+ },
+ "Iceman": {
+  "primary": 2,
+  "secondary": 11
+ },
+ "Iron_Man": {
+  "primary": 4,
+  "secondary": 12
+ },
+ "Jill": {
+  "primary": 9,
+  "secondary": 7
+ },
+ "Jin": {
+  "primary": 7,
+  "secondary": 11
+ },
+ "Juggernaut": {
+  "primary": 9,
+  "secondary": 14
+ },
+ "Ken": {
+  "primary": 10,
+  "secondary": 14
+ },
+ "M_Bison": {
+  "primary": 2,
+  "secondary": 10
+ },
+ "Magneto": {
+  "primary": 4,
+  "secondary": 11
+ },
+ "Marrow": {
+  "primary": 8,
+  "secondary": 2
+ },
+ "Mega_Man": {
+  "primary": 5,
+  "secondary": 3
+ },
+ "Morrigan": {
+  "primary": 10,
+  "secondary": 2
+ },
+ "Omega_Red": {
+  "primary": 10,
+  "secondary": 13
+ },
+ "Psylocke": {
+  "primary": 5,
+  "secondary": 6
+ },
+ "Rogue": {
+  "primary": 12,
+  "secondary": 7
+ },
+ "Roll": {
+  "primary": 6,
+  "secondary": 7
+ },
+ "Ruby_Heart": {
+  "primary": 13,
+  "secondary": 5
+ },
+ "Ryu": {
+  "primary": 9,
+  "secondary": 14
+ },
+ "Sabretooth": {
+  "primary": 6,
+  "secondary": 12
+ },
+ "Sakura": {
+  "primary": 13,
+  "secondary": 10
+ },
+ "Sentinel": {
+  "primary": 4,
+  "secondary": 10
+ },
+ "Servbot": {
+  "primary": 5,
+  "secondary": 7
+ },
+ "Shuma-Gorath": {
+  "primary": 2,
+  "secondary": 10
+ },
+ "Silver_Samurai": {
+  "primary": 9,
+  "secondary": 6
+ },
+ "SonSon": {
+  "primary": 10,
+  "secondary": 12
+ },
+ "Spider-Man": {
+  "primary": 1,
+  "secondary": 7
+ },
+ "Spiral": {
+  "primary": 12,
+  "secondary": 6
+ },
+ "Storm": {
+  "primary": 4,
+  "secondary": 2
+ },
+ "Strider": {
+  "primary": 10,
+  "secondary": 14
+ },
+ "Thanos": {
+  "primary": 4,
+  "secondary": 11
+ },
+ "Tron_Bonne": {
+  "primary": 2,
+  "secondary": 10
+ },
+ "Venom": {
+  "primary": 1,
+  "secondary": 14
+ },
+ "War_Machine": {
+  "primary": 4,
+  "secondary": 11
+ },
+ "Wolverine": {
+  "primary": 4,
+  "secondary": 10
+ },
+ "Wolverine_Bone_Claw": {
+  "primary": 4,
+  "secondary": 10
+ },
+ "Zangief": {
+  "primary": 2,
+  "secondary": 9
+ }
+}

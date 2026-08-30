@@ -5,6 +5,9 @@ last_run.txt
 gallery_verdicts.json
 palette_state.json
 game_path.txt
+stages/
+stage_verdicts.json
+stage_state.json
 __pycache__/
 *.pyc
 .env

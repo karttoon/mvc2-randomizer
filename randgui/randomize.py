@@ -25,6 +25,10 @@ def _engine():
     engine.DEFAULT_LOCKS = config.LOCKS_TXT
     engine.LAST_RUN_LOG = config.LAST_RUN
     engine.PALETTE_STATE = config.PALETTE_STATE
+    engine.DEFAULT_STAGES = config.STAGES
+    engine.STAGE_VERDICTS = config.STAGE_VERDICTS_JSON
+    engine.STAGE_STATE = config.STAGE_STATE
+    engine.STAGE_LOCKS = config.STAGE_LOCKS_JSON
     return engine
 
 
@@ -139,6 +143,23 @@ def mark_protected_notified():
             json.dump(state, f, indent=1, sort_keys=True)
     except Exception:
         pass
+
+
+def get_config():
+    """The user's randomizer_config.json as a dict ({} if absent/broken)."""
+    try:
+        with open(config.CONFIG_JSON, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def set_config_key(key, value):
+    """Persist one config setting (comment keys are preserved)."""
+    c = get_config()
+    c[key] = value
+    with open(config.CONFIG_JSON, "w", encoding="utf-8") as f:
+        json.dump(c, f, indent=2)
 
 
 def last_run_text():

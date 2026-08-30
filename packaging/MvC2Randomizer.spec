@@ -20,7 +20,7 @@ HIDDEN = [
     "config", "randomize", "steamcfg", "palettes", "locks",
     "PIL.ImageTk",
     "mvc2_randomizer",
-    "mvc2_data", "mvc2_data.characters", "mvc2_data.steam",
+    "mvc2_data", "mvc2_data.characters", "mvc2_data.steam", "mvc2_data.stages",
 ]
 
 a = Analysis(
@@ -29,7 +29,10 @@ a = Analysis(
     binaries=[],
     # Bundle the small stock-palette data used to reset the game to vanilla
     # (replaces keeping a full game_50.arc backup).
-    datas=[(os.path.join(ROOT, "mvc2_data", "vanilla_palettes.bin"), "mvc2_data")],
+    datas=[(os.path.join(ROOT, "mvc2_data", "vanilla_palettes.bin"), "mvc2_data"),
+           (os.path.join(ROOT, "mvc2_data", "vanilla_stage_hashes.json"), "mvc2_data"),
+           # Hand-curated primary/secondary color indices for gallery sorting
+           (os.path.join(ROOT, "randgui", "core_colors.json"), ".")],
     hiddenimports=HIDDEN,
     hookspath=[],
     runtime_hooks=[],

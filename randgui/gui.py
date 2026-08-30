@@ -21,6 +21,7 @@ import randomize
 import steamcfg
 import palettes
 import locks
+import stagegal
 
 APP_TITLE = "MvC2 Palette Randomizer"
 
@@ -71,6 +72,7 @@ class App:
         self.nb = nb
         self._tab_randomize(nb)
         self._tab_palettes(nb)
+        self._tab_stages(nb)
         self._tab_locks(nb)
         self._tab_setup(nb)
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -93,7 +95,7 @@ class App:
 
     # ------------------------------------------------------------- setup tab
     def _tab_setup(self, nb):
-        t = ttk.Frame(nb, padding=14); nb.add(t, text="4. Setup")
+        t = ttk.Frame(nb, padding=14); nb.add(t, text="5. Setup")
         ttk.Label(t, text="Game install", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         ttk.Label(t, justify="left", foreground="#555", text=(
             "Your Steam install is detected automatically. If the game is on\n"
@@ -122,9 +124,9 @@ class App:
     # ---------------------------------------------------------- palettes tab
     GRID_COLS = 5
     IMG_WIDTH = 600
-    KEEP_COLOR = "#2f8f2f"
-    REJECT_COLOR = "#c53a3a"
-    NEUTRAL_COLOR = "#777777"
+    KEEP_COLOR = "#2f8f2f"        # kept: green
+    REJECT_COLOR = "#c53a3a"      # rejected: red
+    NEUTRAL_COLOR = "#c9a227"     # unreviewed/new: muted gold
     SELECT_COLOR = "#2b6cb0"      # grid: palettes picked for comparison
 
     def _tab_palettes(self, nb):
@@ -137,20 +139,31 @@ class App:
                                        width=24, values=[])
         self.char_combo.pack(side="left", padx=(4, 12))
         self.char_combo.bind("<<ComboboxSelected>>", lambda e: self._on_char_change())
-        self.view_var = tk.StringVar(value="image")
+        self.view_var = tk.StringVar(value="grid")
         ttk.Radiobutton(top, text="Image", value="image", variable=self.view_var,
                         command=self._show_view).pack(side="left")
         ttk.Radiobutton(top, text="Grid", value="grid", variable=self.view_var,
                         command=self._show_view).pack(side="left", padx=(4, 0))
-        self.sortcol_var = tk.BooleanVar(value=False)
+        self.sortcol_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(top, text="Sort by color", variable=self.sortcol_var,
                         command=self._on_char_change).pack(side="left", padx=(10, 0))
         self.unrev_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Unreviewed only", variable=self.unrev_var,
+        ttk.Checkbutton(top, text="Review new", variable=self.unrev_var,
                         command=self._on_unrev_toggle).pack(side="left", padx=(12, 0))
+        self.hiderej_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text="Hide rejected", variable=self.hiderej_var,
+                        command=self._on_char_change).pack(side="left", padx=(8, 0))
         self.cmp_btn = ttk.Button(top, text="Compare selected...", command=self.on_compare)
         self.cmp_btn.pack(side="left", padx=(12, 0))
         self._action_widgets.append(self.cmp_btn)
+        pv_btn = ttk.Button(top, text="◀ Prev", width=8,
+                            command=lambda: self._jump_unreviewed(-1))
+        pv_btn.pack(side="left", padx=(6, 0))
+        self._action_widgets.append(pv_btn)
+        nx_btn = ttk.Button(top, text="Next ▶", width=8,
+                            command=lambda: self._jump_unreviewed(1))
+        nx_btn.pack(side="left", padx=(2, 0))
+        self._action_widgets.append(nx_btn)
         dl = ttk.Button(top, text="Download / Update", command=self.on_download)
         dl.pack(side="right"); self._action_widgets.append(dl)
 
@@ -242,12 +255,15 @@ class App:
             text = self.nb.tab(self.nb.select(), "text")
         except Exception:
             return
-        if text.endswith("Gallery"):
+        if text.endswith("Palette Gallery"):
             self.file_list.focus_set()
             self.root.after(80, self._render_image)   # pane is now sized
-        elif text.endswith("Lock Palettes"):
+        elif text.endswith("Lock Selections"):
             self._lock_populate_chars()
             self._lock_load()
+            self._slock_populate()
+        elif text.endswith("Stage Gallery"):
+            self._load_stage_gallery()
 
     def _on_img_resize(self, e=None):
         job = getattr(self, "_img_job", None)
@@ -273,6 +289,26 @@ class App:
 
     def _build_grid_view(self, parent):
         self.grid_view = ttk.Frame(parent)
+        bar = ttk.Frame(self.grid_view)
+        bar.pack(fill="x", pady=(0, 4))
+        ttk.Label(bar, text="Thumbnail size:").pack(side="left")
+        # Discrete slider: one tick per row-count (10 per row ... 1 per row);
+        # thumbnails always stretch so every row spans the full width.
+        self.grid_cols_var = tk.IntVar(value=3)
+        self._colvals = list(range(10, 0, -1))    # left = small, right = big
+        self.col_slider = tk.Canvas(bar, width=220, height=24,
+                                    highlightthickness=0, cursor="hand2")
+        try:
+            self.col_slider.configure(bg=ttk.Style().lookup("TFrame", "background")
+                                      or "#f0f0f0")
+        except tk.TclError:
+            pass
+        self.col_slider.pack(side="left", padx=(6, 8))
+        self.col_slider.bind("<Button-1>", self._col_slider_pick)
+        self.col_slider.bind("<B1-Motion>", self._col_slider_pick)
+        self.grid_size_lbl = ttk.Label(bar, text="3 per row", foreground="#777")
+        self.grid_size_lbl.pack(side="left")
+        self._draw_col_slider()
         self.gal_canvas = tk.Canvas(self.grid_view, highlightthickness=0, background="#2d2d2d")
         vsb = ttk.Scrollbar(self.grid_view, orient="vertical", command=self.gal_canvas.yview)
         self.gal_canvas.configure(yscrollcommand=vsb.set)
@@ -290,6 +326,33 @@ class App:
 
     def _on_wheel(self, e):
         self.gal_canvas.yview_scroll(int(-e.delta / 120), "units")
+
+    def _draw_col_slider(self):
+        c = self.col_slider
+        c.delete("all")
+        w, y, pad = 220, 12, 12
+        n = len(self._colvals)
+        self._col_xs = [pad + i * (w - 2 * pad) / (n - 1) for i in range(n)]
+        c.create_line(pad, y, w - pad, y, fill="#999")
+        for x in self._col_xs:
+            c.create_line(x, y - 5, x, y + 5, fill="#888")
+        x = self._col_xs[self._colvals.index(self.grid_cols_var.get())]
+        c.create_oval(x - 6, y - 6, x + 6, y + 6,
+                      fill="#4a76b0", outline="#2b567f", width=2)
+
+    def _col_slider_pick(self, e):
+        """Click/drag: snap to the nearest tick (row count)."""
+        i = min(range(len(self._col_xs)), key=lambda j: abs(self._col_xs[j] - e.x))
+        v = self._colvals[i]
+        if v == self.grid_cols_var.get():
+            return
+        self.grid_cols_var.set(v)
+        self.grid_size_lbl.config(text=f"{v} per row")
+        self._draw_col_slider()
+        job = getattr(self, "_grid_size_job", None)
+        if job:
+            self.root.after_cancel(job)
+        self._grid_size_job = self.root.after(150, self._load_grid)
 
     def _on_grid_resize(self, e=None):
         if self.view_var.get() != "grid":
@@ -347,9 +410,11 @@ class App:
 
     # ---- image-review view ----
     def _on_unrev_toggle(self):
-        self._on_char_change()
-        if self.unrev_var.get() and not self.pal_files:
-            self._advance_to_unreviewed_char()
+        """'Review new': jump straight to the first unreviewed palette. The
+        view is never filtered - neighbors stay visible for comparing."""
+        if self.unrev_var.get():
+            self._last_new_jump = None
+            self._jump_unreviewed(1)
 
     def _on_char_change(self):
         self._load_char(self._current_char(), land=0)
@@ -362,10 +427,13 @@ class App:
         if disp:
             self.char_var.set(disp)
         verdicts = palettes.load_verdicts()
-        self.pal_files = (palettes.list_filtered(char, self.unrev_var.get(), verdicts)
-                          if char else [])
+        self.pal_files = palettes.list_palettes(char) if char else []
+        if char and self.hiderej_var.get():
+            self.pal_files = [f for f in self.pal_files
+                              if verdicts.get(palettes.key_for(char, f))
+                              != palettes.REJECT]
         if char and self.sortcol_var.get():
-            self.pal_files.sort(key=lambda f: palettes.color_sort_key(char, f))
+            self.pal_files = palettes.sort_similarity(char, self.pal_files)
         self.file_list.delete(0, "end")
         for fn in self.pal_files:
             self.file_list.insert("end", fn)
@@ -381,28 +449,16 @@ class App:
             self._load_grid()
         self._update_palette_counts()
 
-    def _advance_to_unreviewed_char(self):
-        """Jump to the next character with unreviewed palettes. Returns True if moved."""
-        if not self._chars:
-            return False
-        start = (self._chars.index(self._cur_char) + 1) if self._cur_char in self._chars else 0
-        for c in self._chars[start:] + self._chars[:start]:
-            if self._unrev.get(c, 0) > 0:
-                self._load_char(c, land=0)
-                return True
-        return False
-
     def _nav_char(self, direction):
-        """Move to the prev/next character that has palettes in the current view,
-        landing on the first (forward) or last (back) palette."""
+        """Move to the prev/next character that has palettes, landing on the
+        first (forward) or last (back) palette."""
         if not self._chars:
             return
         idx = self._chars.index(self._cur_char) if self._cur_char in self._chars else 0
-        verdicts = palettes.load_verdicts()
         n = len(self._chars)
         for step in range(1, n + 1):
             c = self._chars[(idx + direction * step) % n]
-            if palettes.list_filtered(c, self.unrev_var.get(), verdicts):
+            if palettes.list_palettes(c):
                 self._load_char(c, land=0 if direction > 0 else -1)
                 return
 
@@ -442,9 +498,8 @@ class App:
         if i is None or not self.pal_files:
             self.img_lbl.config(image="")
             self.cur_name_lbl.config(text="")
-            msg = ("All caught up - no unreviewed palettes left." if self.unrev_var.get()
-                   else "No palettes for this character.")
-            self.cur_status_lbl.config(text=msg, foreground="#888")
+            self.cur_status_lbl.config(text="No palettes for this character.",
+                                       foreground="#888")
             self.keep_btn.config(text="Keep (Y)"); self.reject_btn.config(text="Reject (N)")
             self.clear_btn.config(text="Clear (C)")
             return
@@ -480,11 +535,9 @@ class App:
         return "break"
 
     # ---- comparison view ----
-    MAX_COMPARE = 12
-
     def on_compare(self):
         """Open a side-by-side comparison of the selected palettes; the user
-        clicks a winner, which is kept while the rest are rejected."""
+        clicks the keepers, and the rest are rejected."""
         files, first_idx = self._compare_selection()
         if len(files) < 2:
             messagebox.showinfo(
@@ -492,12 +545,6 @@ class App:
                 "Select two or more palettes first.\n\n"
                 "List: Ctrl-click to add one, Shift-click for a range.\n"
                 "Grid: click thumbnails to toggle them (blue border).")
-            return "break"
-        if len(files) > self.MAX_COMPARE:
-            messagebox.showinfo(
-                "Compare palettes",
-                f"That's {len(files)} palettes - please compare "
-                f"{self.MAX_COMPARE} or fewer at a time.")
             return "break"
         char = self._cur_char
 
@@ -553,8 +600,8 @@ class App:
             "<MouseWheel>", lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
-        cols = 2 if len(files) <= 4 else 3
-        tw = max(220, (W - 80) // cols - 24)
+        cols = 2 if len(files) <= 4 else (3 if len(files) <= 12 else 4)
+        tw = max(180, (W - 80) // cols - 24)
         cells = {}
 
         def refresh_btn():
@@ -616,8 +663,6 @@ class App:
         self.logln(f"Compare: kept {len(winners)} ({', '.join(winners)}), "
                    f"rejected {len(losers)} other(s).")
         self._load_char(char, land=first_idx)
-        if self.unrev_var.get() and not self.pal_files:
-            self._advance_to_unreviewed_char()
         self.file_list.focus_set()
 
     def _set_verdict(self, verdict):
@@ -634,24 +679,10 @@ class App:
             self._rebuild_char_values()
         self._update_palette_counts()
 
-        if self.unrev_var.get():
-            # the item is now reviewed -> remove it and keep the cursor in place
-            self.file_list.delete(i)
-            del self.pal_files[i]
-            if not self.pal_files:
-                if not self._advance_to_unreviewed_char():
-                    self._show_current()
-            else:
-                j = min(i, len(self.pal_files) - 1)
-                self.file_list.selection_set(j)
-                self.file_list.activate(j)
-                self.file_list.see(j)
-                self._show_current()
+        if i < len(self.pal_files) - 1:
+            self._nav(1)                # auto-advance for fast review
         else:
-            if i < len(self.pal_files) - 1:
-                self._nav(1)            # auto-advance for fast review
-            else:
-                self._show_current()
+            self._show_current()
         self.file_list.focus_set()
         return "break"
 
@@ -662,15 +693,15 @@ class App:
         for w in self.gal_inner.winfo_children():
             w.destroy()
         self._thumb_refs = []
-        self._grid_sel = set()        # filenames toggled for comparison
+        self._grid_sel = []           # filenames toggled for comparison, in click order
         self._grid_cells = {}         # filename -> (cell, pic label, pil thumb, PhotoImage, verdict color)
         self._grid_sel_imgs = {}      # filename -> highlighted PhotoImage (built on demand)
         char = self._cur_char
         if char:
-            cols = self.GRID_COLS
             cw = max(self.gal_canvas.winfo_width(), 320)
             self._grid_w = cw
-            tw = max(110, (cw - (cols + 1) * 10) // cols)   # fill the width
+            cols = self.grid_cols_var.get()             # from the tick slider
+            tw = max(60, (cw - (cols + 1) * 10) // cols)   # fill the full row
             verdicts = palettes.load_verdicts()
             # pal_files carries the active ordering (alphabetical or color-sorted)
             for i, fn in enumerate(self.pal_files):
@@ -715,15 +746,71 @@ class App:
         """Toggle a grid thumbnail in/out of the comparison selection."""
         cell, pic, pil, img, vcolor = self._grid_cells[fn]
         if fn in self._grid_sel:
-            self._grid_sel.discard(fn)
+            self._grid_sel.remove(fn)
             pic.config(image=img)
             cell.config(highlightbackground=vcolor, highlightcolor=vcolor)
         else:
-            self._grid_sel.add(fn)
+            self._grid_sel.append(fn)
             pic.config(image=self._selected_thumb(fn))
             cell.config(highlightbackground=self.SELECT_COLOR,
                         highlightcolor=self.SELECT_COLOR)
         self._update_compare_btn()
+
+    def _jump_unreviewed(self, direction):
+        """Prev/Next: cycle through unreviewed ("new") palettes in the current
+        ordering. In grid view the palette scrolls into view and joins the
+        comparison selection so its color neighbors can be picked around it;
+        in image view it's selected in the list. When the character has no
+        unreviewed palettes left, moves to the nearest character that does."""
+        char = self._cur_char
+        if not char:
+            return
+        verdicts = palettes.load_verdicts()
+        unrev = [f for f in self.pal_files
+                 if verdicts.get(palettes.key_for(char, f)) is None]
+        if not unrev:
+            # nearest character (in the chosen direction) with unreviewed ones
+            idx = self._chars.index(char) if char in self._chars else 0
+            n = len(self._chars)
+            for step in range(1, n + 1):
+                c = self._chars[(idx + direction * step) % n]
+                if self._unrev.get(c, 0) > 0:
+                    self._load_char(c)
+                    self._last_new_jump = None
+                    # let the grid rebuild before jumping into it
+                    self.root.after(120, lambda: self._jump_unreviewed(direction))
+                    return
+            messagebox.showinfo("No new palettes",
+                                "Everything is reviewed - nothing new left.")
+            return
+        last = getattr(self, "_last_new_jump", None)
+        if last in unrev:
+            i = (unrev.index(last) + direction) % len(unrev)
+        else:
+            i = 0 if direction > 0 else len(unrev) - 1
+        fn = unrev[i]
+        self._last_new_jump = fn
+        if self.view_var.get() == "grid":
+            self._grid_scroll_to(fn)
+            if fn not in self._grid_sel:
+                self._grid_toggle(fn)
+        else:
+            j = self.pal_files.index(fn)
+            self.file_list.selection_clear(0, "end")
+            self.file_list.selection_set(j)
+            self.file_list.activate(j)
+            self.file_list.see(j)
+            self._show_current()
+            self.file_list.focus_set()
+
+    def _grid_scroll_to(self, fn):
+        entry = self._grid_cells.get(fn)
+        if not entry:
+            return
+        cell = entry[0]
+        self.gal_inner.update_idletasks()
+        total = max(1, self.gal_inner.winfo_height())
+        self.gal_canvas.yview_moveto(max(0.0, (cell.winfo_y() - 40) / total))
 
     def _update_compare_btn(self):
         n = len(getattr(self, "_grid_sel", ())) if self.view_var.get() == "grid" else 0
@@ -733,7 +820,9 @@ class App:
     def _compare_selection(self):
         """(files, first_index) chosen for comparison in the active view."""
         if self.view_var.get() == "grid":
-            files = [f for f in self.pal_files if f in getattr(self, "_grid_sel", ())]
+            # click order, so the comparison lays them out as they were picked
+            files = [f for f in getattr(self, "_grid_sel", [])
+                     if f in self.pal_files]
         else:
             files = [self.pal_files[i] for i in self.file_list.curselection()]
         first = self.pal_files.index(files[0]) if files else 0
@@ -779,7 +868,7 @@ class App:
 
     # ------------------------------------------------------- lock palettes tab
     def _tab_locks(self, nb):
-        t = ttk.Frame(nb, padding=14); nb.add(t, text="3. Lock Palettes")
+        t = ttk.Frame(nb, padding=14); nb.add(t, text="4. Lock Selections")
         ttk.Label(t, text="Lock palettes to buttons", font=("Segoe UI", 11, "bold")
                   ).pack(anchor="w")
         ttk.Label(t, foreground="#555", justify="left", text=(
@@ -823,6 +912,88 @@ class App:
         cl.pack(side="left", padx=(8, 0)); self._action_widgets.append(cl)
         self.lock_status = ttk.Label(row, text="", foreground="#177245")
         self.lock_status.pack(side="left", padx=(12, 0))
+
+        # ---- stage locks ----
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=12)
+        ttk.Label(t, text="Lock stages to slots", font=("Segoe UI", 11, "bold")
+                  ).pack(anchor="w")
+        ttk.Label(t, foreground="#555", justify="left", text=(
+            "Pin a stage slot to one stage from your pool so it never rolls.\n"
+            "Pick \"(random)\" to let the slot shuffle again. Saved instantly.")
+        ).pack(anchor="w", pady=(4, 8))
+        srow = ttk.Frame(t); srow.pack(anchor="w")
+        ttk.Label(srow, text="Stage:").pack(side="left")
+        self.slock_stage_var = tk.StringVar()
+        self.slock_stage_combo = ttk.Combobox(srow, textvariable=self.slock_stage_var,
+                                              state="readonly", width=30, values=[])
+        self.slock_stage_combo.pack(side="left", padx=(4, 14))
+        self.slock_stage_combo.bind("<<ComboboxSelected>>",
+                                    lambda e: self._slock_load_variants())
+        ttk.Label(srow, text="Locked stage:").pack(side="left")
+        self.slock_var = tk.StringVar()
+        self.slock_combo = ttk.Combobox(srow, textvariable=self.slock_var,
+                                        state="readonly", width=42, values=[])
+        self.slock_combo.pack(side="left", padx=(4, 12))
+        self.slock_combo.bind("<<ComboboxSelected>>", lambda e: self._slock_apply())
+        self.slock_thumb = ttk.Label(t)
+        self.slock_thumb.pack(anchor="w", pady=(8, 0))
+        self._slock_secs = []
+        self._slock_map = {}
+
+    def _slock_populate(self):
+        """Fill the stage dropdown (keeps the current selection)."""
+        self._slock_secs = stagegal.sections()
+        names = []
+        for title, _vs in self._slock_secs:
+            names.append(title.split("  -  ", 1)[-1].split("   (")[0])
+        self.slock_stage_combo["values"] = names
+        if names and self.slock_stage_var.get() not in names:
+            self.slock_stage_var.set(names[0])
+        self._slock_load_variants()
+
+    def _slock_load_variants(self):
+        idx = self.slock_stage_combo.current()
+        if idx < 0 or not self._slock_secs:
+            return
+        slot_id = stagegal.SLOTS[idx]
+        _title, variants = self._slock_secs[idx]
+        verdicts = stagegal.load_verdicts()
+        pool = [v for v in variants if verdicts.get(v["key"]) != "delete"]
+        self._slock_map = {}
+        values = ["(random)"]
+        for v in pool:
+            kind = stagegal.KIND_LABEL.get(v["kind"], v["kind"])
+            disp = f"{v['name']} — {v['author']} [{kind}]"
+            self._slock_map[disp] = v
+            values.append(disp)
+        self.slock_combo["values"] = values
+        cur = stagegal.load_locks().get(slot_id)
+        disp = next((d for d, v in self._slock_map.items()
+                     if v["key"] == cur), "(random)")
+        self.slock_var.set(disp)
+        self._slock_preview()
+
+    def _slock_apply(self):
+        idx = self.slock_stage_combo.current()
+        if idx < 0:
+            return
+        slot_id = stagegal.SLOTS[idx]
+        v = self._slock_map.get(self.slock_var.get())
+        stagegal.set_lock(slot_id, v["key"] if v else None)
+        self.logln(f"Stage {slot_id} "
+                   + (f"locked to {v['name']} ({v['author']})." if v
+                      else "unlocked (random)."))
+        self._slock_preview()
+
+    def _slock_preview(self):
+        v = self._slock_map.get(self.slock_var.get())
+        if v:
+            img = ImageTk.PhotoImage(stagegal.thumb_image(v, width=260))
+            self._slock_img = img
+            self.slock_thumb.config(image=img)
+        else:
+            self.slock_thumb.config(image="")
+            self._slock_img = None
 
     def _lock_populate_chars(self):
         chars = palettes.char_folders()
@@ -891,6 +1062,384 @@ class App:
         self.lock_status.config(text=f"Cleared - all slots random for {char}.")
         self.logln(f"Cleared locks for {char}.")
 
+    # ------------------------------------------------------- stage gallery tab
+    # Master-detail stage gallery: stage list left (aligned counts), hero
+    # preview with C/L/R view swap top-right, that stage's variant cards below.
+    HERO_W = 470
+    HERO_H = 340
+    MINI_W = 128
+
+    def _tab_stages(self, nb):
+        t = ttk.Frame(nb, padding=10); nb.add(t, text="3. Stage Gallery")
+        pw = ttk.PanedWindow(t, orient="horizontal")
+        pw.pack(fill="both", expand=True)
+
+        # ---- left pane: stage list + selected-variant actions + filters
+        left = ttk.Frame(pw, padding=(0, 0, 6, 0))
+        self.stg_tree = ttk.Treeview(left, columns=("n",), show="tree",
+                                     selectmode="browse", height=17)
+        self.stg_tree.column("#0", width=196, stretch=True)
+        self.stg_tree.column("n", width=46, anchor="e", stretch=False)
+        self.stg_tree.pack(fill="x")
+        self.stg_tree.bind("<<TreeviewSelect>>", lambda e: self._on_stage_slot())
+
+        ttk.Separator(left, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Label(left, text="Selected stage", font=("Segoe UI", 9, "bold")
+                  ).pack(anchor="w")
+        self.stg_sel_name = ttk.Label(left, text="-", wraplength=225,
+                                      font=("Segoe UI", 10, "bold"))
+        self.stg_sel_name.pack(anchor="w", pady=(2, 0))
+        self.stg_sel_sub = ttk.Label(left, text="", foreground="#666",
+                                     wraplength=225)
+        self.stg_sel_sub.pack(anchor="w")
+        self.stg_pool_btn = ttk.Button(left, text="-", width=30,
+                                       command=self._stage_pool_toggle)
+        self.stg_pool_btn.pack(anchor="w", pady=(6, 0))
+
+        ttk.Separator(left, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Label(left, text="Show", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self.stage_filter = tk.StringVar(value="pool")
+        fr = ttk.Frame(left); fr.pack(anchor="w")
+        for val, txt in (("all", "All"), ("pool", "In pool"),
+                         ("out", "Excluded")):
+            ttk.Radiobutton(fr, text=txt, value=val, variable=self.stage_filter,
+                            command=self._stage_cards_build
+                            ).pack(side="left", padx=(0, 6))
+        self.stage_lbl = ttk.Label(left, text="", foreground="#666",
+                                   wraplength=225, justify="left")
+        self.stage_lbl.pack(anchor="w", pady=(10, 0))
+        pw.add(left, weight=0)
+
+        # ---- right pane: hero + C/L/R minis, cards below
+        right = ttk.Frame(pw)
+        self._stg_right = right
+        right.bind("<Configure>", self._stage_relayout)
+        hr = ttk.Frame(right); hr.pack(fill="x", anchor="w")
+        # the hero strip stretches to the minis so the row spans the full
+        # width; the image centers inside on the dark letterbox
+        self.stg_hero = tk.Label(hr, bd=1, relief="solid", background="#2d2d2d",
+                                 foreground="#888", cursor="hand2",
+                                 font=("Segoe UI", 11))
+        self.stg_hero.pack(side="left", fill="both", expand=True)
+        self.stg_hero.bind("<Button-1>", lambda e: self._stage_hero_full())
+        minis = ttk.Frame(hr); minis.pack(side="left", fill="y", padx=(8, 0))
+        self._stg_minis = {}
+        for vk, txt in (("C", "Center"), ("L", "Left"), ("R", "Right")):
+            mf = tk.Frame(minis, highlightthickness=2,
+                          highlightbackground="#aaaaaa")
+            mf.pack(pady=(0, 6), anchor="w")
+            ml = tk.Label(mf, bd=0, cursor="hand2", background="#2d2d2d")
+            ml.pack()
+            mc = tk.Label(mf, text=txt, font=("Segoe UI", 8),
+                          background="#f0f0f0", foreground="#444")
+            mc.pack(fill="x")
+            for w in (mf, ml, mc):
+                w.bind("<Button-1>", lambda e, k=vk: self._stage_set_view(k))
+            self._stg_minis[vk] = (mf, ml, mc)
+
+        body = ttk.Frame(right); body.pack(fill="both", expand=True, pady=(8, 0))
+        self.stg_canvas = tk.Canvas(body, highlightthickness=0, background="#2d2d2d")
+        vsb = ttk.Scrollbar(body, orient="vertical", command=self.stg_canvas.yview)
+        self.stg_canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self.stg_canvas.pack(side="left", fill="both", expand=True)
+        self.stg_inner = tk.Frame(self.stg_canvas, background="#2d2d2d")
+        self.stg_canvas.create_window((0, 0), window=self.stg_inner, anchor="nw")
+        self.stg_inner.bind("<Configure>", lambda e: self.stg_canvas.configure(
+            scrollregion=self.stg_canvas.bbox("all")))
+        self.stg_canvas.bind("<Enter>", lambda e: self.stg_canvas.bind_all(
+            "<MouseWheel>", lambda ev: self.stg_canvas.yview_scroll(
+                int(-ev.delta / 120), "units")))
+        self.stg_canvas.bind("<Leave>",
+                             lambda e: self.stg_canvas.unbind_all("<MouseWheel>"))
+        pw.add(right, weight=4)
+
+        self._stage_thumb_cache = {}   # (key, width) -> PhotoImage
+        self._stage_secs = []          # [(title, variants)]
+        self._stg_cur_variant = None
+        self._stg_cur_view = "C"
+        self._stg_cards = {}           # key -> (cell frame, inner ring frame)
+        self._hero_w = self.HERO_W     # dynamic; tracks pane width
+        self._card_tw = self.STAGE_TW
+        self._stage_built = False
+
+    def _stage_relayout(self, e=None):
+        job = getattr(self, "_stg_relayout_job", None)
+        if job:
+            self.root.after_cancel(job)
+        self._stg_relayout_job = self.root.after(160, self._stage_relayout_now)
+
+    def _stage_relayout_now(self):
+        """Recompute hero + card sizes from the pane width and re-render."""
+        w = self._stg_right.winfo_width()
+        if w < 240 or not self._stage_built:
+            return
+        hero_w = max(300, w - self.MINI_W - 26)
+        cw = self.stg_canvas.winfo_width()
+        if cw < 120:
+            cw = w - 20
+        cols = max(2, cw // (self.STAGE_TW + 22))
+        card_tw = max(120, (cw - 10 - cols * 22) // cols)
+        if (abs(hero_w - self._hero_w) < 16
+                and abs(card_tw - self._card_tw) < 12
+                and cols == getattr(self, "_card_cols", 0)):
+            return
+        self._hero_w = hero_w
+        self._stage_set_view(self._stg_cur_view)
+        self._stage_cards_build()      # computes final tw/cols itself
+
+    STAGE_TW = 170
+
+    def _load_stage_gallery(self, force=False):
+        """Fill the stage list; keep the current selection when possible."""
+        if self._stage_built and not force:
+            return
+        self._stage_secs = stagegal.sections()
+        keep = self.stg_tree.selection()
+        self.stg_tree.delete(*self.stg_tree.get_children())
+        verdicts = stagegal.load_verdicts()
+        for i, (title, vs) in enumerate(self._stage_secs):
+            n = sum(1 for v in vs if verdicts.get(v["key"]) != "delete")
+            short = title.split("  -  ", 1)[-1].split("   (")[0]
+            self.stg_tree.insert("", "end", iid=str(i), text=short,
+                                 values=(f"{n}/{len(vs)}",))
+        if self._stage_secs:
+            sel = keep[0] if keep and self.stg_tree.exists(keep[0]) else "0"
+            self.stg_tree.selection_set(sel)   # fires _on_stage_slot
+        else:
+            for w in self.stg_inner.winfo_children():
+                w.destroy()
+            tk.Label(self.stg_inner, text="No stage data yet - run Download / "
+                     "Update on the Palette Gallery tab.",
+                     background="#2d2d2d", foreground="#aaa",
+                     font=("Segoe UI", 11)).pack(padx=20, pady=20)
+        self._stage_built = True
+        self._update_stage_counts()
+
+    def _stage_slot_variants(self):
+        sel = self.stg_tree.selection()
+        if not sel or not self._stage_secs:
+            return []
+        return self._stage_secs[int(sel[0])][1]
+
+    def _on_stage_slot(self):
+        variants = self._stage_slot_variants()
+        self._stage_cards_build()
+        verdicts = stagegal.load_verdicts()
+        in_pool = [v for v in variants if verdicts.get(v["key"]) != "delete"]
+        if in_pool:
+            self._stage_select_variant(in_pool[0])
+        else:
+            self._stage_clear_selection()
+
+    def _stage_clear_selection(self):
+        """Nothing in this stage's pool: blank hero + a hint."""
+        self._stg_cur_variant = None
+        sel = self.stg_tree.selection()
+        name = (self.stg_tree.item(sel[0], "text") if sel else "this stage")
+        self.stg_hero.config(image="", text=f"No stages selected for {name}",
+                             width=42, height=14)
+        self._hero_img = None
+        self.stg_sel_name.config(text="-")
+        self.stg_sel_sub.config(text="")
+        self.stg_pool_btn.config(text="-")
+        for _vk, (mf, ml, _mc) in self._stg_minis.items():
+            ml.config(image="", text="")
+            ml._img = None
+            mf.config(highlightbackground="#aaaaaa", highlightcolor="#aaaaaa")
+
+    def _stage_cards_build(self):
+        for w in self.stg_inner.winfo_children():
+            w.destroy()
+        self._stg_cards = {}
+        variants = self._stage_slot_variants()
+        verdicts = stagegal.load_verdicts()
+        filt = self.stage_filter.get()
+        if filt == "pool":
+            shown = [v for v in variants if verdicts.get(v["key"]) != "delete"]
+        elif filt == "out":
+            shown = [v for v in variants if verdicts.get(v["key"]) == "delete"]
+        else:
+            shown = variants
+        base = [v for v in shown if not v.get("xx")]
+        extra = [v for v in shown if v.get("xx")]
+        # per-card chrome: 10 grid gap + 6 pool border + 6 selection ring.
+        # Cards are sized as if at least 3 sat per row, so a slot with 1-2
+        # stages shows them at the same familiar size (and fully on screen)
+        # instead of ballooning to fill the width.
+        cw = self.stg_canvas.winfo_width()
+        if cw < 120:                    # canvas not laid out yet
+            cw = 640
+        cols = max(2, cw // (self.STAGE_TW + 22))
+        biggest = max(len(base), len(extra), 1)
+        cols = max(1, min(cols, biggest))
+        k = max(cols, 3)
+        self._card_tw = min(300, max(120, (cw - 10 - k * 22) // k))
+        self._card_cols = cols
+
+        def grid_of(vs):
+            row = tk.Frame(self.stg_inner, background="#2d2d2d")
+            row.pack(fill="x", padx=4, pady=(4, 2))
+            for i, v in enumerate(vs):
+                self._stage_card(row, i, cols, v, verdicts)
+
+        if base:
+            grid_of(base)
+        if extra:
+            tk.Label(self.stg_inner,
+                     text="custom & ported stages (training slot only)",
+                     background="#2d2d2d", foreground="#bbbbbb",
+                     font=("Segoe UI", 9, "italic")).pack(anchor="w",
+                                                          padx=8, pady=(8, 0))
+            grid_of(extra)
+        if not shown:
+            tk.Label(self.stg_inner, text="(none match the filter)",
+                     background="#2d2d2d", foreground="#777",
+                     font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=8)
+        # restore the selection ring after a rebuild
+        cur = self._stg_cur_variant
+        if cur and cur["key"] in self._stg_cards:
+            self._stg_cards[cur["key"]][1].config(background=self.SELECT_COLOR)
+        self.stg_canvas.yview_moveto(0)
+
+    def _stage_thumb(self, v, width=None):
+        width = width or self.STAGE_TW
+        ck = (v["key"], width)
+        img = self._stage_thumb_cache.get(ck)
+        if img is None:
+            img = ImageTk.PhotoImage(stagegal.thumb_image(v, width=width))
+            self._stage_thumb_cache[ck] = img
+        return img
+
+    def _stage_card(self, parent, i, cols, v, verdicts):
+        """Image-only card: pool state = outer border, selection = inner ring."""
+        in_pool = verdicts.get(v["key"]) != "delete"
+        color = self.KEEP_COLOR if in_pool else self.REJECT_COLOR
+        cell = tk.Frame(parent, highlightthickness=3, background="#2d2d2d",
+                        highlightbackground=color, highlightcolor=color)
+        cell.grid(row=i // cols, column=i % cols, padx=5, pady=5, sticky="n")
+        inner = tk.Frame(cell, background="#2d2d2d")
+        inner.pack()
+        pic = tk.Label(inner, image=self._stage_thumb(v, self._card_tw), bd=0)
+        pic.pack(padx=3, pady=3)
+        self._stg_cards[v["key"]] = (cell, inner)
+        for w in (cell, inner, pic):
+            w.bind("<Button-1>", lambda e, vv=v: self._stage_select_variant(vv))
+            w.bind("<Button-3>", lambda e, vv=v: self._stage_pool_toggle(vv))
+
+    # ---- selection / hero ----
+    def _stage_select_variant(self, v):
+        prev = self._stg_cur_variant
+        self._stg_cur_variant = v
+        if prev and prev["key"] in self._stg_cards:
+            self._stg_cards[prev["key"]][1].config(background="#2d2d2d")
+        if v["key"] in self._stg_cards:
+            self._stg_cards[v["key"]][1].config(background=self.SELECT_COLOR)
+        kind = stagegal.KIND_LABEL.get(v["kind"], v["kind"])
+        self.stg_sel_name.config(text=v["name"])
+        self.stg_sel_sub.config(text=f"{v['author']} · {kind}"
+                                + (f" · {v['game']}" if v.get("game") else ""))
+        self._refresh_pool_btn()
+        view = "C" if "C" in v.get("views", {}) else next(iter(v.get("views", {})), None)
+        self._stage_set_view(view or "C")
+        self._stage_fill_minis()
+
+    def _stage_fill_minis(self):
+        v = self._stg_cur_variant or {}
+        views = v.get("views", {})
+        for vk, (mf, ml, mc) in self._stg_minis.items():
+            path = views.get(vk)
+            if path:
+                im = PILImage.open(path).convert("RGB")
+                im = im.resize((self.MINI_W,
+                                max(1, int(im.height * self.MINI_W / im.width))),
+                               PILImage.LANCZOS)
+                ph = ImageTk.PhotoImage(im)
+                ml.config(image=ph, text="")
+                ml._img = ph
+            else:
+                ml.config(image="", text="n/a", width=14,
+                          background="#2d2d2d", foreground="#666")
+                ml._img = None
+
+    def _stage_set_view(self, vk):
+        self._stg_cur_view = vk
+        v = self._stg_cur_variant
+        for k, (mf, _ml, _mc) in self._stg_minis.items():
+            c = self.SELECT_COLOR if k == vk else "#aaaaaa"
+            mf.config(highlightbackground=c, highlightcolor=c)
+        path = (v or {}).get("views", {}).get(vk)
+        if not path:
+            if v is not None:
+                self.stg_hero.config(image="", text="no preview", width=42,
+                                     height=14)
+                self._hero_img = None
+            return
+        im = PILImage.open(path).convert("RGB")
+        scale = min(self._hero_w / im.width, self.HERO_H / im.height)
+        im = im.resize((max(1, int(im.width * scale)),
+                        max(1, int(im.height * scale))), PILImage.LANCZOS)
+        self._hero_img = ImageTk.PhotoImage(im)
+        self.stg_hero.config(image=self._hero_img, text="")
+
+    def _stage_hero_full(self):
+        v = self._stg_cur_variant
+        path = (v or {}).get("views", {}).get(self._stg_cur_view)
+        if not path:
+            return
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"{v['name']} - {v['author']}")
+        dlg.transient(self.root)
+        dlg.configure(background="#1b1b1f")
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.bind("<Button-1>", lambda e: dlg.destroy())
+        im = PILImage.open(path).convert("RGB")
+        W = min(im.width, self.root.winfo_screenwidth() - 120)
+        im = im.resize((W, int(im.height * W / im.width)), PILImage.LANCZOS)
+        ph = ImageTk.PhotoImage(im)
+        tk.Label(dlg, image=ph, bd=0).pack(padx=6, pady=6)
+        dlg._img = ph
+
+    # ---- pool membership ----
+    def _stage_pool_toggle(self, v=None):
+        v = v or self._stg_cur_variant
+        if not v:
+            return
+        in_pool = stagegal.toggle(v["key"])
+        if v["key"] in self._stg_cards:
+            color = self.KEEP_COLOR if in_pool else self.REJECT_COLOR
+            self._stg_cards[v["key"]][0].config(highlightbackground=color,
+                                                highlightcolor=color)
+        # refresh the tree count for the selected slot
+        sel = self.stg_tree.selection()
+        if sel and self._stage_secs:
+            title, vs = self._stage_secs[int(sel[0])]
+            verdicts = stagegal.load_verdicts()
+            n = sum(1 for x in vs if verdicts.get(x["key"]) != "delete")
+            self.stg_tree.item(sel[0], values=(f"{n}/{len(vs)}",))
+        if v is self._stg_cur_variant:
+            self._refresh_pool_btn()
+        self._update_stage_counts()
+
+    def _refresh_pool_btn(self):
+        v = self._stg_cur_variant
+        if not v:
+            self.stg_pool_btn.config(text="-")
+            return
+        in_pool = stagegal.load_verdicts().get(v["key"]) != "delete"
+        self.stg_pool_btn.config(
+            text=("✔ In pool - click to exclude" if in_pool
+                  else "✖ Excluded - click to include"))
+
+    def _update_stage_counts(self):
+        total, excluded = stagegal.counts()
+        self.stage_lbl.config(
+            text=(f"{total} stages · {total - excluded} in pool · "
+                  f"{excluded} excluded\n"
+                  "Left-click card: select/preview\n"
+                  "Right-click card: toggle in/out of pool")
+            if total else "")
+
     # --------------------------------------------------------- randomize tab
     def _tab_randomize(self, nb):
         t = ttk.Frame(nb, padding=14); nb.add(t, text="1. Randomize")
@@ -902,6 +1451,14 @@ class App:
         row = ttk.Frame(t); row.pack(anchor="w", pady=(0, 10))
         ttk.Label(row, text="Fixed seed (optional):").pack(side="left")
         ttk.Entry(row, textvariable=self.seed_var, width=14).pack(side="left", padx=(6, 0))
+
+        srow = ttk.Frame(t); srow.pack(anchor="w", pady=(0, 8))
+        self.stages_var = tk.BooleanVar(
+            value=bool(randomize.get_config().get("randomize_stages")))
+        ttk.Checkbutton(srow, text="Also randomize stages (pick them on the "
+                                   "Stage Gallery tab)",
+                        variable=self.stages_var,
+                        command=self._on_stages_toggle).pack(side="left")
 
         rrow = ttk.Frame(t); rrow.pack(anchor="w")
         r = ttk.Button(rrow, text="Randomize now", command=self.on_randomize)
@@ -1061,15 +1618,25 @@ class App:
         messagebox.showinfo("Launch option copied",
                             steamcfg.instructions())
 
+    def _on_stages_toggle(self):
+        randomize.set_config_key("randomize_stages", bool(self.stages_var.get()))
+        self.logln("Stage randomization "
+                   + ("enabled." if self.stages_var.get() else "disabled."))
+
     def on_download(self):
         if not messagebox.askyesno(
-                "Download palette gallery",
-                "This downloads the full palette gallery from GitHub - roughly 500 MB.\n\n"
-                "Only new palettes are added; anything you already have (and your "
+                "Download palette & stage gallery",
+                "This downloads the full palette and stage gallery from GitHub "
+                "- roughly 750 MB.\n\n"
+                "Only new files are added; anything you already have (and your "
                 "keep/reject choices) is preserved.\n\nContinue?"):
             return
-        self.run_job("Downloading / updating palettes", randomize.download_palettes,
-                     on_done=self._on_char_change)
+        self.run_job("Downloading / updating gallery", randomize.download_palettes,
+                     on_done=self._after_download)
+
+    def _after_download(self):
+        self._on_char_change()
+        self._load_stage_gallery(force=True)
 
     def on_view_log(self):
         self.logln("\n" + "-" * 56)
