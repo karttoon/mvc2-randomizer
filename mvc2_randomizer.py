@@ -23,6 +23,7 @@ import os
 import random
 import sys
 import zipfile
+import zlib
 import urllib.request
 
 from PIL import Image
@@ -42,6 +43,10 @@ from mvc2_data.steam import (
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "randomizer_config.json")
 DEFAULT_SKINS = os.path.join(SCRIPT_DIR, "skins")
+DEFAULT_STAGES = os.path.join(SCRIPT_DIR, "stages")
+STAGE_VERDICTS = os.path.join(SCRIPT_DIR, "stage_verdicts.json")
+STAGE_STATE = os.path.join(SCRIPT_DIR, "stage_state.json")
+STAGE_LOCKS = os.path.join(SCRIPT_DIR, "stage_locks.json")
 LAST_RUN_LOG = os.path.join(SCRIPT_DIR, "last_run.txt")
 # Tracks what this tool wrote so external edits (e.g. PalMod) can be detected
 # and protected instead of overwritten. See load_palette_state().
@@ -58,6 +63,8 @@ DEFAULT_STEAM_PATH = os.path.join(
 # GitHub skins download
 SKINS_REPO_ZIP = "https://github.com/karttoon/mvc2-skins/archive/refs/heads/master.zip"
 SKINS_ZIP_PREFIX = "mvc2-skins-master/skins/"
+STAGE_BINS_ZIP_PREFIX = "mvc2-skins-master/stage-textures/"
+STAGE_MEDIA_ZIP_PREFIX = "mvc2-skins-master/stages/"
 
 # Folder name → character ID (1:1 mapping via safe_name)
 FOLDER_TO_CHAR_ID = {}
@@ -73,12 +80,14 @@ DEFAULT_CONFIG_CONTENT = {
     "skins_path": None,
     "game_path": None,
     "seed": None,
+    "randomize_stages": False,
 }
 
 CONFIG_DESCRIPTIONS = {
     "skins_path": "Path to skins folder (null = ./skins next to this script)",
     "game_path": "Game install directory (null = default Steam path)",
     "seed": "Fixed random seed for reproducible results (null = random each run)",
+    "randomize_stages": "Also randomize stages each run (needs stage data downloaded)",
 }
 
 DEFAULT_LOCKS = os.path.join(SCRIPT_DIR, "skin_locks.txt")
@@ -489,6 +498,246 @@ def unprotect_palettes(arc_path, char_id=None):
     return True
 
 
+# --------------------------------------------------------------------------
+# Stage randomization
+#
+# Stage payloads live in DEFAULT_STAGES (downloaded with the gallery):
+# stages.json manifest + bins/*.BIN. Each of the 17 slots gets a pool of
+# variants (default / author edit / community retextures); the training slot
+# additionally gets every slot-agnostic "XX" stage (ports, originals). A roll
+# writes TEX plus POL - the variant's own POL when it ships one, otherwise
+# the slot's default POL so geometry from a previous roll never lingers.
+# Protection mirrors palettes: a slot whose current content is neither
+# pristine, a known gallery payload, nor what we last wrote is left alone.
+# --------------------------------------------------------------------------
+
+from mvc2_data import stages as stagelib
+
+VANILLA_STAGE_HASHES_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "mvc2_data", "vanilla_stage_hashes.json")
+
+
+def load_stage_state():
+    state = {}
+    try:
+        if os.path.isfile(STAGE_STATE):
+            with open(STAGE_STATE, "r") as f:
+                state = json.load(f)
+    except Exception:
+        state = {}
+    state.setdefault("written", {})     # slot -> {"pol": md5, "tex": md5}
+    state.setdefault("protected", [])   # slots with unrecognized content
+    state.setdefault("notified", [])
+    return state
+
+
+def save_stage_state(state):
+    with open(STAGE_STATE, "w") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+
+
+def load_stage_verdicts():
+    """{variant_key: 'delete'} - variants excluded from the pool. Everything
+    is in-pool by default; keys match bins stems (d_0B, m_00, c_04_68776038)."""
+    try:
+        if os.path.isfile(STAGE_VERDICTS):
+            with open(STAGE_VERDICTS, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def load_stage_locks():
+    """{slot_id: variant_key} - slots pinned to one stage. A lock wins over
+    the pool (even over an excluded variant)."""
+    try:
+        if os.path.isfile(STAGE_LOCKS):
+            with open(STAGE_LOCKS, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def load_stage_manifest(stages_dir):
+    path = os.path.join(stages_dir, "stages.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def build_stage_pools(manifest, stages_dir):
+    """{slot_id: [variant, ...]} - variant = dict(key, name, author, kind,
+    tex, pol) with tex/pol as absolute paths (pol may be None). Only variants
+    whose payload files exist on disk are included."""
+    bins = os.path.join(stages_dir, "bins")
+
+    def path_of(name):
+        if not name:
+            return None
+        p = os.path.join(bins, name)
+        return p if os.path.isfile(p) else None
+
+    pools = {slot: [] for slot in stagelib.STAGE_SLOTS}
+    training = pools[stagelib.TRAINING_SLOT]
+
+    for e in manifest.get("stages", []):
+        sid = e.get("id", "")
+        name = e.get("n", sid)
+        if sid in pools:
+            dtex = path_of(f"d_{sid}_tex.BIN")
+            if dtex:
+                pools[sid].append({"key": f"d_{sid}", "name": f"{name} (default)",
+                                   "author": "Capcom", "kind": "default",
+                                   "tex": dtex, "pol": None})
+            mtex = path_of(e.get("tex"))
+            if mtex:
+                pools[sid].append({"key": f"m_{sid}", "name": name,
+                                   "author": e.get("author", "?"),
+                                   "kind": "edit", "tex": mtex,
+                                   "pol": path_of(f"m_{sid}_pol.BIN")})
+        else:
+            # slot-agnostic custom stage (e.g. CV/NeoCity) -> training pool
+            mtex = path_of(e.get("tex"))
+            if mtex:
+                training.append({"key": f"m_{sid}", "name": name,
+                                 "author": e.get("author", "?"),
+                                 "kind": "original", "tex": mtex,
+                                 "pol": path_of(f"m_{sid}_pol.BIN")})
+
+    for c in manifest.get("community", []):
+        sid = c.get("stageId", "")
+        tex = path_of(c.get("tex"))
+        if not tex:
+            continue
+        variant = {"key": f"c_{sid}_{c.get('sub', '')}",
+                   "name": c.get("name") or c.get("title") or c.get("sub", "?"),
+                   "author": c.get("author", "?"),
+                   "kind": c.get("kind", "retexture"),
+                   "tex": tex, "pol": path_of(c.get("pol"))}
+        if sid in pools:
+            pools[sid].append(variant)
+        else:
+            training.append(variant)
+    return pools
+
+
+def _file_md5(path):
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def randomize_stages(rom, stages_dir, quiet, dry_run):
+    """Roll every slot's pool and rebuild the ROM. Returns (rom, log_lines)."""
+    manifest = load_stage_manifest(stages_dir)
+    if not manifest:
+        print("Stages: no stage data downloaded yet - run Download/Update first.")
+        return rom, []
+    try:
+        with open(VANILLA_STAGE_HASHES_FILE, "r") as f:
+            vanilla = json.load(f)
+    except Exception:
+        vanilla = {}
+    verdicts = load_stage_verdicts()
+    state = load_stage_state()
+    locks = load_stage_locks()
+    pools = build_stage_pools(manifest, stages_dir)
+
+    # Every payload we could ever have installed counts as "ours".
+    bins = os.path.join(stages_dir, "bins")
+    known = set()
+    if os.path.isdir(bins):
+        for f in os.listdir(bins):
+            if f.upper().endswith(".BIN"):
+                known.add(_file_md5(os.path.join(bins, f)))
+
+    entries = stagelib.parse_toc(rom)
+    replacements = {}
+    log = ["", "Stages:"]
+    protected_kept, newly_protected = [], []
+    slot_names = {e["id"]: e.get("n", e["id"]) for e in manifest.get("stages", [])}
+
+    for slot in stagelib.STAGE_SLOTS:
+        default_pol = os.path.join(bins, f"d_{slot}_pol.BIN")
+        default_tex = os.path.join(bins, f"d_{slot}_tex.BIN")
+        if not (os.path.isfile(default_pol) and os.path.isfile(default_tex)):
+            continue                    # can't guarantee geometry - skip slot
+        # Safety: a variant without its own POL must match the slot's TEX
+        # size, or it's mislabeled data that would corrupt the stage.
+        want = os.path.getsize(default_tex)
+        safe = []
+        for v in pools.get(slot, []):
+            if v["pol"] is None and os.path.getsize(v["tex"]) != want:
+                print(f"  Warning: {v['key']} TEX size doesn't fit slot "
+                      f"{slot} - skipped (mislabeled?)")
+                continue
+            safe.append(v)
+        pool = [v for v in safe if verdicts.get(v["key"]) != "delete"]
+        # A lock pins the slot to one variant (wins even over exclusion)
+        locked = None
+        lock_key = locks.get(slot)
+        if lock_key:
+            locked = next((v for v in safe if v["key"] == lock_key), None)
+            if locked is None:
+                print(f"  Warning: locked stage {lock_key} unavailable for "
+                      f"slot {slot} - randomizing instead")
+        if not pool and not locked:
+            continue
+        pol_i, tex_i = stagelib.slot_entries(slot)
+        sname = slot_names.get(slot, slot)
+
+        if slot in state["protected"]:
+            protected_kept.append(slot)
+            log.append(f"  {slot} {sname}: (protected - existing mod kept)")
+            continue
+        cur_pol = stagelib.entry_hash(rom, pol_i, entries)
+        cur_tex = stagelib.entry_hash(rom, tex_i, entries)
+        ok = known | set(state["written"].get(slot, {}).values())
+        v_h = vanilla.get(slot, {})
+        ok |= {v_h.get("pol"), v_h.get("tex")}
+        if cur_pol not in ok or cur_tex not in ok:
+            state["protected"].append(slot)
+            newly_protected.append(slot)
+            log.append(f"  {slot} {sname}: (unknown mod detected - now protected)")
+            continue
+
+        pick = locked or random.choice(pool)
+        tag = (f"{pick['name']} ({pick['author']}) [{pick['kind']}]"
+               + (" [locked]" if locked else ""))
+        log.append(f"  {slot} {sname}: {tag}")
+        if not quiet:
+            print(f"Stage {slot} {sname}: {tag}")
+        if not dry_run:
+            tex_data = open(pick["tex"], "rb").read()
+            pol_data = open(pick["pol"] or default_pol, "rb").read()
+            replacements[tex_i] = tex_data
+            replacements[pol_i] = pol_data
+            state["written"][slot] = {
+                "pol": hashlib.md5(pol_data).hexdigest(),
+                "tex": hashlib.md5(tex_data).hexdigest(),
+            }
+
+    if newly_protected:
+        print("NOTICE: Unrecognized stage mods detected for slot(s): "
+              + ", ".join(newly_protected))
+        print("  These slots are PROTECTED and won't be randomized.")
+    if protected_kept and not quiet:
+        print(f"Protected stage slots kept as-is: {', '.join(protected_kept)}")
+
+    if not dry_run:
+        if replacements:
+            rom = stagelib.replace_entries(rom, replacements)
+        save_stage_state(state)
+    return rom, (log if len(log) > 2 else [])
+
+
 def load_rejected_skins():
     """Load rejected skins from gallery_verdicts.json (verdict == 'delete')."""
     verdicts_file = os.path.join(SCRIPT_DIR, "gallery_verdicts.json")
@@ -539,7 +788,7 @@ def do_gallery_download(skins_dir):
                 pct = downloaded / total * 100
                 bar_len = 40
                 filled = int(bar_len * downloaded // total)
-                bar = "█" * filled + "░" * (bar_len - filled)
+                bar = "#" * filled + "-" * (bar_len - filled)
                 print(f"\r  [{bar}] {pct:5.1f}% — {downloaded / 1024 / 1024:.1f} / {total / 1024 / 1024:.1f} MB", end="", flush=True)
             else:
                 print(f"\r  Downloaded {downloaded / 1024 / 1024:.1f} MB...", end="", flush=True)
@@ -582,6 +831,55 @@ def do_gallery_download(skins_dir):
             added += 1
 
     print(f"Added {added} new skins ({existed} already existed, {rejected} skipped from reject list)")
+
+    # Stage payloads + gallery media (added in 1.0.2). stages_dir layout:
+    #   stages.json          manifest (always refreshed)
+    #   bins/*.BIN           stage POL/TEX payloads
+    #   previews/*.jpg       thumbnails + center/left/right stills
+    stages_dir = DEFAULT_STAGES
+    s_added = s_existed = 0
+    with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            name = os.path.basename(info.filename)
+            if info.filename.startswith(STAGE_BINS_ZIP_PREFIX):
+                if not name.upper().endswith(".BIN"):
+                    continue
+                dest = os.path.join(stages_dir, "bins", name)
+                # c_* payloads are content-hash-named (immutable); m_*/d_*
+                # names are stable but their content can be updated upstream.
+                refresh = name.startswith(("m_", "d_"))
+            elif info.filename.startswith(STAGE_MEDIA_ZIP_PREFIX):
+                if name == "stages.json":
+                    dest = os.path.join(stages_dir, "stages.json")
+                    refresh = True
+                elif name.lower().endswith(".jpg"):
+                    dest = os.path.join(stages_dir, "previews", name)
+                    refresh = name.startswith(("m_", "d_"))
+                else:
+                    continue          # pan videos / other manifests
+            else:
+                continue
+            if os.path.isfile(dest):
+                if not refresh:
+                    s_existed += 1
+                    continue
+                # refresh only when content actually changed (zip CRC check)
+                crc = 0
+                with open(dest, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        crc = zlib.crc32(chunk, crc)
+                if crc == info.CRC:
+                    s_existed += 1
+                    continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with zf.open(info) as src, open(dest, "wb") as dst:
+                dst.write(src.read())
+            s_added += 1
+    if s_added or s_existed:
+        print(f"Stages: {s_added} files added/refreshed "
+              f"({s_existed} already present)")
     return True
 
 
@@ -614,6 +912,8 @@ def build_parser():
                    help="Unlock protected characters (ones with external edits, e.g. "
                         "PalMod) so the randomizer may overwrite them; combine with "
                         "--character to unlock just one")
+    p.add_argument("--stages", action="store_true",
+                   help="Also randomize stages (or set randomize_stages in config)")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress the per-character assignment list (still written to last_run.txt)")
     p.add_argument("--gallery-download", action="store_true",
@@ -916,6 +1216,14 @@ def main():
     if protected_kept:
         print(f"Protected characters kept as-is: {', '.join(protected_kept)}")
         print()
+
+    # Stage randomization (opt-in via --stages or config randomize_stages)
+    if (args.stages or config.get("randomize_stages")) and rom is not None:
+        rom, stage_log = randomize_stages(rom, DEFAULT_STAGES,
+                                          args.quiet, args.dry_run)
+        run_log.extend(stage_log)
+    elif args.stages and rom is None:
+        print("[dry-run] Stage roll skipped (needs the ROM); run without --dry-run.")
 
     if args.dry_run:
         print(f"[dry-run] Would randomize {total_assigned} characters"
