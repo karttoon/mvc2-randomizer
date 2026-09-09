@@ -7,6 +7,10 @@ Collection install, user-writable data living next to the .exe. Flat module
 """
 import os, sys, subprocess
 
+# Single source of truth for the app version (shown in the GUI, used for
+# release tags). Bump this when cutting a new version.
+VERSION = "1.0.3"
+
 
 def app_dir():
     """Folder holding user-writable data (skins/, config, backup).
@@ -29,17 +33,76 @@ def resource_dir():
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 ROOT = app_dir()
-DATA = ROOT                                        # writable data sits beside the exe
+DATA = ROOT                                        # content folders sit beside the exe
+# Small settings/verdict/log/state files live together in data/ to keep the
+# app folder tidy (content folders below stay at the top level).
+STATE = os.path.join(DATA, "data")
+
+# Big content folders (top level)
 SKINS = os.path.join(DATA, "skins")
-CONFIG_JSON = os.path.join(DATA, "randomizer_config.json")
-LOCKS_TXT = os.path.join(DATA, "skin_locks.txt")
-LAST_RUN = os.path.join(DATA, "last_run.txt")
-VERDICTS_JSON = os.path.join(DATA, "gallery_verdicts.json")
-PALETTE_STATE = os.path.join(DATA, "palette_state.json")
 STAGES = os.path.join(DATA, "stages")
-STAGE_VERDICTS_JSON = os.path.join(DATA, "stage_verdicts.json")
-STAGE_STATE = os.path.join(DATA, "stage_state.json")
-STAGE_LOCKS_JSON = os.path.join(DATA, "stage_locks.json")
+CUSTOM = os.path.join(DATA, "custom")       # user drop-ins; downloads never touch it
+PRESETS = os.path.join(DATA, "presets")     # curated verdict mixes
+
+# Settings / verdicts / logs / protection state (all under data/). Names use a
+# consistent palette_* / stage_* scheme.
+CONFIG_JSON = os.path.join(STATE, "randomizer_config.json")
+LOCKS_TXT = os.path.join(STATE, "palette_locks.txt")
+LAST_RUN = os.path.join(STATE, "last_run.txt")
+VERDICTS_JSON = os.path.join(STATE, "palette_verdicts.json")
+PALETTE_STATE = os.path.join(STATE, "palette_state.json")
+STAGE_VERDICTS_JSON = os.path.join(STATE, "stage_verdicts.json")
+STAGE_STATE = os.path.join(STATE, "stage_state.json")
+STAGE_LOCKS_JSON = os.path.join(STATE, "stage_locks.json")
+
+# Canonical state filename -> legacy names to migrate from (older app roots and
+# pre-normalization names). Each is moved into data/ under the canonical name.
+_STATE_MIGRATIONS = {
+    "randomizer_config.json": [],
+    "palette_verdicts.json": ["gallery_verdicts.json"],
+    "palette_locks.txt": ["skin_locks.txt"],
+    "palette_state.json": [],
+    "last_run.txt": [],
+    "stage_verdicts.json": [],
+    "stage_state.json": [],
+    "stage_locks.json": [],
+    "game_path.txt": [],
+}
+
+
+def migrate_state():
+    """Bring loose state up to the current layout: move pre-1.0.3 root files
+    into data/ and rename legacy filenames. One-time, non-destructive."""
+    try:
+        os.makedirs(STATE, exist_ok=True)
+    except OSError:
+        return
+    import shutil
+    for canonical, legacy in _STATE_MIGRATIONS.items():
+        target = os.path.join(STATE, canonical)
+        if os.path.exists(target):
+            continue
+        # search current + legacy names, in data/ then the app root
+        for name in [canonical] + legacy:
+            for base in (STATE, DATA):
+                src = os.path.join(base, name)
+                if os.path.abspath(src) != os.path.abspath(target) \
+                        and os.path.isfile(src):
+                    try:
+                        shutil.move(src, target)
+                    except OSError:
+                        pass
+                    break
+            if os.path.exists(target):
+                break
+
+
+def ensure_custom_dirs():
+    for sub in ("skins", "stages"):
+        try:
+            os.makedirs(os.path.join(CUSTOM, sub), exist_ok=True)
+        except OSError:
+            pass
 
 # MvC2 Fighting Collection (Steam) App ID — same one MixConverter uses.
 APPID = "2634890"
@@ -48,7 +111,7 @@ _DEFAULT_STEAM = (r"C:\Program Files (x86)\Steam\steamapps\common"
 ARC_SUBPATH = os.path.join("nativeDX11x64", "arc", "pc", "game_50.arc")
 
 # Manual override for when the game is on another drive / auto-detect fails.
-GAME_OVERRIDE = os.path.join(DATA, "game_path.txt")
+GAME_OVERRIDE = os.path.join(STATE, "game_path.txt")
 
 
 def _read_override():

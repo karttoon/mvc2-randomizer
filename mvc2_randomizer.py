@@ -21,6 +21,7 @@ import io
 import json
 import os
 import random
+import re
 import sys
 import zipfile
 import zlib
@@ -41,16 +42,25 @@ from mvc2_data.steam import (
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "randomizer_config.json")
+# Loose settings/verdict/log/state files live together under data/ to keep
+# the app folder tidy; content folders stay at the top level. The GUI points
+# STATE_DIR (and the paths below) at the app's own data dir; the reads that
+# derive from STATE_DIR at call time (verdicts) honour that override.
+STATE_DIR = os.path.join(SCRIPT_DIR, "data")
+DEFAULT_CONFIG = os.path.join(STATE_DIR, "randomizer_config.json")
 DEFAULT_SKINS = os.path.join(SCRIPT_DIR, "skins")
 DEFAULT_STAGES = os.path.join(SCRIPT_DIR, "stages")
-STAGE_VERDICTS = os.path.join(SCRIPT_DIR, "stage_verdicts.json")
-STAGE_STATE = os.path.join(SCRIPT_DIR, "stage_state.json")
-STAGE_LOCKS = os.path.join(SCRIPT_DIR, "stage_locks.json")
-LAST_RUN_LOG = os.path.join(SCRIPT_DIR, "last_run.txt")
+STAGE_VERDICTS = os.path.join(STATE_DIR, "stage_verdicts.json")
+STAGE_STATE = os.path.join(STATE_DIR, "stage_state.json")
+STAGE_LOCKS = os.path.join(STATE_DIR, "stage_locks.json")
+# User-owned drop-in content; gallery downloads never touch this tree.
+CUSTOM_DIR = os.path.join(SCRIPT_DIR, "custom")
+# Curated verdict mixes downloaded with the gallery.
+PRESETS_DIR = os.path.join(SCRIPT_DIR, "presets")
+LAST_RUN_LOG = os.path.join(STATE_DIR, "last_run.txt")
 # Tracks what this tool wrote so external edits (e.g. PalMod) can be detected
 # and protected instead of overwritten. See load_palette_state().
-PALETTE_STATE = os.path.join(SCRIPT_DIR, "palette_state.json")
+PALETTE_STATE = os.path.join(STATE_DIR, "palette_state.json")
 ARC_FILENAME = "game_50.arc"
 ARC_SUBPATH = os.path.join("arc", "pc", ARC_FILENAME)
 
@@ -65,6 +75,7 @@ SKINS_REPO_ZIP = "https://github.com/karttoon/mvc2-skins/archive/refs/heads/mast
 SKINS_ZIP_PREFIX = "mvc2-skins-master/skins/"
 STAGE_BINS_ZIP_PREFIX = "mvc2-skins-master/stage-textures/"
 STAGE_MEDIA_ZIP_PREFIX = "mvc2-skins-master/stages/"
+PRESETS_ZIP_PREFIX = "mvc2-skins-master/presets/"
 
 # Folder name → character ID (1:1 mapping via safe_name)
 FOLDER_TO_CHAR_ID = {}
@@ -81,6 +92,7 @@ DEFAULT_CONFIG_CONTENT = {
     "game_path": None,
     "seed": None,
     "randomize_stages": False,
+    "include_unreviewed": True,
 }
 
 CONFIG_DESCRIPTIONS = {
@@ -88,9 +100,10 @@ CONFIG_DESCRIPTIONS = {
     "game_path": "Game install directory (null = default Steam path)",
     "seed": "Fixed random seed for reproducible results (null = random each run)",
     "randomize_stages": "Also randomize stages each run (needs stage data downloaded)",
+    "include_unreviewed": "Randomize using kept AND unreviewed items (false = only kept)",
 }
 
-DEFAULT_LOCKS = os.path.join(SCRIPT_DIR, "skin_locks.txt")
+DEFAULT_LOCKS = os.path.join(STATE_DIR, "palette_locks.txt")
 
 
 def generate_default_config(config_path):
@@ -623,6 +636,57 @@ def build_stage_pools(manifest, stages_dir):
             pools[sid].append(variant)
         else:
             training.append(variant)
+
+    # Drop-in custom stages. Two recognized name forms:
+    #   <slot|XX>_<Name>_<tex|pol>.BIN   (this app's convention)
+    #   STG<slot><POL|TEX>.BIN           (game-native names from mod releases)
+    # Anything else needs assignment in the app's Stage Gallery. XX (full
+    # custom stages) require BOTH files and only ever enter the training pool
+    # - cross-slot POL swaps crash the Steam collection - and a slot-named
+    # variant whose TEX size doesn't match that slot is refused for the same
+    # reason (a mislabeled full stage would crash the game).
+    cdir = os.path.join(CUSTOM_DIR, "stages")
+    if os.path.isdir(cdir):
+        groups = {}
+        for f in sorted(os.listdir(cdir)):
+            m = re.match(r"^(XX|[0-9A-F]{2})_(.+)_(tex|pol)\.BIN$", f, re.I)
+            if m:
+                slot, name, part = (m.group(1).upper(), m.group(2),
+                                    m.group(3).lower())
+            else:
+                m = re.match(r"^STG([0-9A-F]{2})(POL|TEX)\.BIN$", f, re.I)
+                if not m:
+                    continue        # unrecognized: assigned via the app
+                slot = m.group(1).upper()
+                name, part = f"stg{slot.lower()}", m.group(2).lower()
+            groups.setdefault((slot, name), {})[part] = os.path.join(cdir, f)
+        for (slot, name), files in sorted(groups.items()):
+            if "tex" not in files:
+                print(f"  Warning: custom stage {slot}_{name} skipped - "
+                      f"no tex file")
+                continue
+            variant = {"key": f"u_{slot}_{name}", "name": name,
+                       "author": "you", "kind": "custom",
+                       "tex": files["tex"], "pol": files.get("pol")}
+            if slot == "XX":
+                if not files.get("pol"):
+                    print(f"  Warning: custom stage XX_{name} skipped - "
+                          f"a full custom stage needs both pol and tex")
+                    continue
+                training.append(variant)
+            elif slot in pools:
+                d_tex = os.path.join(bins, f"d_{slot}_tex.BIN")
+                if (os.path.isfile(d_tex)
+                        and os.path.getsize(files["tex"])
+                        != os.path.getsize(d_tex)):
+                    print(f"  Warning: custom stage {slot}_{name} skipped - "
+                          f"TEX size doesn't fit slot {slot} (if it's a full "
+                          f"custom stage, assign it to Training)")
+                    continue
+                pools[slot].append(variant)
+            else:
+                print(f"  Warning: custom stage {slot}_{name} skipped - "
+                      f"unknown slot {slot}")
     return pools
 
 
@@ -634,7 +698,7 @@ def _file_md5(path):
     return h.hexdigest()
 
 
-def randomize_stages(rom, stages_dir, quiet, dry_run):
+def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False):
     """Roll every slot's pool and rebuild the ROM. Returns (rom, log_lines)."""
     manifest = load_stage_manifest(stages_dir)
     if not manifest:
@@ -679,7 +743,12 @@ def randomize_stages(rom, stages_dir, quiet, dry_run):
                       f"{slot} - skipped (mislabeled?)")
                 continue
             safe.append(v)
-        pool = [v for v in safe if verdicts.get(v["key"]) != "delete"]
+        # kept + unreviewed roll by default; only-selected drops the unreviewed.
+        # An empty pool falls through to "leave the slot as it is".
+        if only_selected:
+            pool = [v for v in safe if verdicts.get(v["key"]) == "keep"]
+        else:
+            pool = [v for v in safe if verdicts.get(v["key"]) != "delete"]
         # A lock pins the slot to one variant (wins even over exclusion)
         locked = None
         lock_key = locks.get(slot)
@@ -738,9 +807,108 @@ def randomize_stages(rom, stages_dir, quiet, dry_run):
     return rom, (log if len(log) > 2 else [])
 
 
+# --------------------------------------------------------------------------
+# Custom (drop-in) palette sheets
+#
+# custom/skins/<Character>/*.png joins that character's pool. Every sheet is
+# validated against the gallery format first: indexed PNG, the character's
+# exact canonical dimensions, and a byte-identical sprite index layout (only
+# the palette may differ). This catches sheets dropped into the wrong
+# character's folder, non-gallery sprite sheets, and index-scrambled exports
+# that would render as confetti in-game.
+# --------------------------------------------------------------------------
+
+SHEET_SPECS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "mvc2_data", "sheet_specs.json")
+_sheet_specs = None
+
+
+def load_sheet_specs():
+    global _sheet_specs
+    if _sheet_specs is None:
+        try:
+            with open(SHEET_SPECS_FILE, "r") as f:
+                _sheet_specs = json.load(f)
+        except Exception:
+            _sheet_specs = {}
+    return _sheet_specs
+
+
+def validate_sheet(path, folder_name):
+    """(ok, reason) - is this PNG a gallery-format sheet for this character?"""
+    specs = load_sheet_specs()
+    spec = specs.get(folder_name)
+    if not spec:
+        return True, ""              # no spec -> can't judge, allow
+    try:
+        with Image.open(path) as im:
+            if im.mode != "P":
+                return False, "not an indexed (P-mode) PNG"
+            if im.size != (spec["w"], spec["h"]):
+                other = [n for n, s in specs.items()
+                         if (s["w"], s["h"]) == im.size]
+                hint = (f" (size matches {other[0]})" if other
+                        else " (not a gallery-format sheet)")
+                return False, f"wrong sheet size for {folder_name}{hint}"
+            digest = hashlib.md5(im.tobytes()).hexdigest()
+        if digest != spec["md5"]:
+            return False, ("sprite layout differs from the gallery standard "
+                           "(colors would scramble in-game)")
+    except Exception as e:
+        return False, f"unreadable ({e})"
+    return True, ""
+
+
+def load_gallery_verdicts_raw():
+    path = os.path.join(STATE_DIR, "palette_verdicts.json")
+    try:
+        if os.path.isfile(path):
+            with open(path, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def collect_sheets(skin_folder, folder_name, verdicts_raw, only_selected=False):
+    """[(display_name, full_path)] for a character: gallery files plus valid
+    custom drop-ins (shown as custom/<file>; verdict key <Char>/custom/<file>).
+
+    Rejected palettes (verdict 'delete') are always excluded. With
+    only_selected, unreviewed palettes are excluded too - just the kept ones
+    ('keep') roll.
+    """
+    def wanted(key):
+        v = verdicts_raw.get(key)
+        if v == "delete":
+            return False
+        return v == "keep" if only_selected else True
+
+    out = []
+    if os.path.isdir(skin_folder):
+        for f in sorted(os.listdir(skin_folder)):
+            if f.lower().endswith(".png") and wanted(f"{folder_name}/{f}"):
+                out.append((f, os.path.join(skin_folder, f)))
+    cdir = os.path.join(CUSTOM_DIR, "skins", folder_name)
+    if os.path.isdir(cdir):
+        for f in sorted(os.listdir(cdir)):
+            if not f.lower().endswith(".png"):
+                continue
+            if not wanted(f"{folder_name}/custom/{f}"):
+                continue
+            path = os.path.join(cdir, f)
+            ok, why = validate_sheet(path, folder_name)
+            if not ok:
+                print(f"  Warning: custom palette {folder_name}/{f} "
+                      f"skipped - {why}")
+                continue
+            out.append((f"custom/{f}", path))
+    return out
+
+
 def load_rejected_skins():
     """Load rejected skins from gallery_verdicts.json (verdict == 'delete')."""
-    verdicts_file = os.path.join(SCRIPT_DIR, "gallery_verdicts.json")
+    verdicts_file = os.path.join(STATE_DIR, "palette_verdicts.json")
     rejected = set()
     if os.path.isfile(verdicts_file):
         with open(verdicts_file, "r") as f:
@@ -766,10 +934,6 @@ def do_gallery_download(skins_dir):
     print(f"Source: {SKINS_REPO_ZIP}")
     print(f"Output: {skins_dir}")
     print()
-
-    skip_list = load_rejected_skins()
-    if skip_list:
-        print(f"Rejected skins: {len(skip_list)} (from gallery verdicts)")
 
     print("Downloading archive...")
     try:
@@ -804,8 +968,11 @@ def do_gallery_download(skins_dir):
     os.makedirs(skins_dir, exist_ok=True)
     added = 0
     existed = 0
-    rejected = 0
 
+    # Extract every palette in the archive. Rejected palettes are kept on disk
+    # too (rejection is a view/pool choice, not a delete) so they can always be
+    # reconsidered later - the whole archive is downloaded regardless, so there
+    # is no bandwidth saving in skipping them.
     with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
         for info in zf.infolist():
             if info.is_dir():
@@ -816,11 +983,6 @@ def do_gallery_download(skins_dir):
             rel_path = info.filename[len(SKINS_ZIP_PREFIX):]
             if not rel_path:
                 continue
-            # Check skip list (filename only, case-insensitive)
-            filename = os.path.basename(rel_path)
-            if filename.lower() in skip_list:
-                rejected += 1
-                continue
             dest = os.path.join(skins_dir, rel_path)
             if os.path.isfile(dest):
                 existed += 1
@@ -830,7 +992,7 @@ def do_gallery_download(skins_dir):
                 dst.write(src.read())
             added += 1
 
-    print(f"Added {added} new skins ({existed} already existed, {rejected} skipped from reject list)")
+    print(f"Added {added} new skins ({existed} already existed)")
 
     # Stage payloads + gallery media (added in 1.0.2). stages_dir layout:
     #   stages.json          manifest (always refreshed)
@@ -859,6 +1021,11 @@ def do_gallery_download(skins_dir):
                     refresh = name.startswith(("m_", "d_"))
                 else:
                     continue          # pan videos / other manifests
+            elif info.filename.startswith(PRESETS_ZIP_PREFIX):
+                if not name.lower().endswith(".json"):
+                    continue
+                dest = os.path.join(PRESETS_DIR, name)
+                refresh = True        # curated mixes update over time
             else:
                 continue
             if os.path.isfile(dest):
@@ -938,6 +1105,8 @@ def find_skin_file(skin_folder, filename):
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    os.makedirs(STATE_DIR, exist_ok=True)   # loose state lives under data/
 
     # Load config (CLI args override config values)
     config = load_config(args.config)
@@ -1029,7 +1198,9 @@ def main():
     total_locked = 0
     run_log = []  # collected for last_run.txt
 
-    rejected = load_rejected_skins()   # palettes the user marked 'delete' — skip them
+    verdicts_raw = load_gallery_verdicts_raw()   # palette keep/delete verdicts
+    # False -> only kept palettes roll; True (default) -> kept + unreviewed roll
+    only_selected = not config.get("include_unreviewed", True)
 
     # Vanilla palette data, used when a character has fewer palettes than
     # buttons: their block is reset to stock first so leftover slots show the
@@ -1073,37 +1244,45 @@ def main():
                 run_log.append("")
                 continue
 
-        # Collect PNG files (excluding palettes the user rejected)
+        # Collect sheets (kept + unreviewed, or kept-only; custom drop-ins too)
         skin_folder = os.path.join(skins_dir, folder_name)
-        pngs = []
-        if os.path.isdir(skin_folder):
-            pngs = sorted(f for f in os.listdir(skin_folder)
-                          if f.lower().endswith(".png") and f.lower() not in rejected)
+        sheets = collect_sheets(skin_folder, folder_name, verdicts_raw,
+                                only_selected)
 
         # Fewer palettes than buttons (possibly none): reset this character to
         # vanilla first, then fill what we can.
-        if len(pngs) < len(BUTTON_NAMES):
+        if len(sheets) < len(BUTTON_NAMES):
             if not args.dry_run and vanilla and cid in vanilla:
                 start = STEAM_PALETTE_OFFSETS[cid]
                 block = vanilla[cid]
                 rom[start:start + len(block)] = block
                 state["written"].pop(folder_name, None)   # vanilla = clean slate
-            if not pngs:
+            if not sheets:
                 run_log.append(char_name)
                 run_log.append("  (no palettes - reset to vanilla)")
                 run_log.append("")
                 continue
 
-        # Check which buttons are locked vs randomizable
-        locked_buttons = {}   # btn_idx → filename
+        # Check which buttons are locked vs randomizable. Sheets are
+        # (display_name, path) pairs; locks may reference custom/<file>.
+        locked_buttons = {}   # btn_idx → (display, path)
         random_buttons = []   # btn_idx values to randomize
         for btn_idx, btn_name in enumerate(BUTTON_NAMES):
             lock_val = locks.get((folder_name, btn_name))
             if lock_val is not None:
-                # Locked — find the file case-insensitively
-                actual = find_skin_file(skin_folder, lock_val)
-                if actual:
-                    locked_buttons[btn_idx] = actual
+                entry = None
+                if lock_val.lower().startswith("custom/"):
+                    cdir = os.path.join(CUSTOM_DIR, "skins", folder_name)
+                    actual = (find_skin_file(cdir, lock_val[7:])
+                              if os.path.isdir(cdir) else None)
+                    if actual:
+                        entry = (f"custom/{actual}", os.path.join(cdir, actual))
+                else:
+                    actual = find_skin_file(skin_folder, lock_val)
+                    if actual:
+                        entry = (actual, os.path.join(skin_folder, actual))
+                if entry:
+                    locked_buttons[btn_idx] = entry
                 else:
                     # Locked file not found — warn and randomize instead
                     print(f"  Warning: locked skin not found: {lock_val}")
@@ -1116,8 +1295,8 @@ def main():
         # are excluded so a locked palette can't also land on a random slot.
         # With a short pool, shuffle which buttons get skins so the vanilla
         # slots vary run to run.
-        locked_files = {f.lower() for f in locked_buttons.values()}
-        pool = [f for f in pngs if f.lower() not in locked_files]
+        locked_files = {d.lower() for d, _p in locked_buttons.values()}
+        pool = [s for s in sheets if s[0].lower() not in locked_files]
         if len(pool) < len(random_buttons):
             random.shuffle(random_buttons)
         random_assignments = assign_skins(pool, len(random_buttons)) if random_buttons else []
@@ -1127,8 +1306,7 @@ def main():
 
         for btn_idx, btn_name in enumerate(BUTTON_NAMES):
             if btn_idx in locked_buttons:
-                skin_file = locked_buttons[btn_idx]
-                skin_path = os.path.join(skin_folder, skin_file)
+                skin_file, skin_path = locked_buttons[btn_idx]
                 if args.dry_run:
                     btn_log.append(f"  {btn_name}: {skin_file} [locked]")
                 else:
@@ -1141,8 +1319,7 @@ def main():
             elif random_buttons and btn_idx in random_buttons:
                 idx = random_buttons.index(btn_idx)
                 if idx < len(random_assignments):
-                    skin_file = random_assignments[idx]
-                    skin_path = os.path.join(skin_folder, skin_file)
+                    skin_file, skin_path = random_assignments[idx]
                     if args.dry_run:
                         btn_log.append(f"  {btn_name}: {skin_file}")
                     else:
@@ -1220,7 +1397,8 @@ def main():
     # Stage randomization (opt-in via --stages or config randomize_stages)
     if (args.stages or config.get("randomize_stages")) and rom is not None:
         rom, stage_log = randomize_stages(rom, DEFAULT_STAGES,
-                                          args.quiet, args.dry_run)
+                                          args.quiet, args.dry_run,
+                                          only_selected)
         run_log.extend(stage_log)
     elif args.stages and rom is None:
         print("[dry-run] Stage roll skipped (needs the ROM); run without --dry-run.")

@@ -1,13 +1,22 @@
-skins/**/*.png
+# User content + generated state (kept out of the repo)
+skins/
+stages/
+custom/
+presets/
+data/
+
+# legacy root state files (pre-1.0.3, now under data/)
 randomizer_config.json
 skin_locks.txt
 last_run.txt
 gallery_verdicts.json
 palette_state.json
 game_path.txt
-stages/
 stage_verdicts.json
 stage_state.json
+stage_locks.json
+stage_seen.json
+
 __pycache__/
 *.pyc
 .env

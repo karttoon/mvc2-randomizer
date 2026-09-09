@@ -1,0 +1,282 @@
+{
+ "Akuma": {
+  "h": 229,
+  "md5": "fd59c2cf2324f117b1680b3ba61af884",
+  "w": 622
+ },
+ "Amingo": {
+  "h": 268,
+  "md5": "24121536fb599e43eba6dbecc6f6cb5c",
+  "w": 953
+ },
+ "Anakaris": {
+  "h": 288,
+  "md5": "4caeadf7b32caa76ba642f27119635d9",
+  "w": 901
+ },
+ "BB_Hood": {
+  "h": 226,
+  "md5": "0feabb6083b7560be1a83016243ada55",
+  "w": 785
+ },
+ "Blackheart": {
+  "h": 313,
+  "md5": "a4d59e7eed7746f75461336b6b359323",
+  "w": 743
+ },
+ "Cable": {
+  "h": 290,
+  "md5": "11c30ada11abb7cb5f6a08adc815eef1",
+  "w": 696
+ },
+ "Cammy": {
+  "h": 223,
+  "md5": "a47cdd6f857a32d6f153d50d7b5997b4",
+  "w": 732
+ },
+ "Captain_America": {
+  "h": 238,
+  "md5": "14f4ad4da8e1f181f8359238dded3a6a",
+  "w": 669
+ },
+ "Captain_Commando": {
+  "h": 227,
+  "md5": "b1e2880129d0846dd08dd58978dcdbd9",
+  "w": 763
+ },
+ "Charlie_Nash": {
+  "h": 271,
+  "md5": "46a8d8f93a6e38e80f5124ba94ab9e26",
+  "w": 769
+ },
+ "Chun-Li": {
+  "h": 213,
+  "md5": "27981b1d965b735311c4bfd2b54c05e4",
+  "w": 651
+ },
+ "Colossus": {
+  "h": 297,
+  "md5": "031aad6d860d242634f29b4cf1ab6feb",
+  "w": 721
+ },
+ "Cyclops": {
+  "h": 246,
+  "md5": "6ba79ef11f595d9c995938e85e3604c2",
+  "w": 600
+ },
+ "Dan": {
+  "h": 246,
+  "md5": "41f817d4e75434a4c013e57a72d0dbeb",
+  "w": 683
+ },
+ "Dhalsim": {
+  "h": 298,
+  "md5": "e556a0a303c19e4dd0ba716dc9df2dc7",
+  "w": 709
+ },
+ "Doctor_Doom": {
+  "h": 313,
+  "md5": "d9870c5ea15e5f03b577d18f46a454ba",
+  "w": 840
+ },
+ "Felicia": {
+  "h": 297,
+  "md5": "d98f6c53d256c7b92c30471354a08844",
+  "w": 790
+ },
+ "Gambit": {
+  "h": 244,
+  "md5": "60dccc35e5f027867600be020c3c20b1",
+  "w": 763
+ },
+ "Guile": {
+  "h": 240,
+  "md5": "f39d916fbe09532b82ef72d0f6a2e7bf",
+  "w": 1017
+ },
+ "Hayato": {
+  "h": 235,
+  "md5": "7fca21db682021b1a037d930fb72fc85",
+  "w": 760
+ },
+ "Hulk": {
+  "h": 322,
+  "md5": "69a5303e6d722e9896e487d710fd236f",
+  "w": 981
+ },
+ "Iceman": {
+  "h": 257,
+  "md5": "f9b58624223529e0de2733e2b776f7ec",
+  "w": 780
+ },
+ "Iron_Man": {
+  "h": 233,
+  "md5": "21c101404fd035bece50eccadf88aca9",
+  "w": 645
+ },
+ "Jill": {
+  "h": 225,
+  "md5": "7ddd5771863065081b30957fe95d1a72",
+  "w": 681
+ },
+ "Jin": {
+  "h": 231,
+  "md5": "331eead454a1d26874de7984221d557a",
+  "w": 773
+ },
+ "Juggernaut": {
+  "h": 278,
+  "md5": "d19aaddc37bbcf0f7ec2a422123de527",
+  "w": 1005
+ },
+ "Ken": {
+  "h": 224,
+  "md5": "0cbe0ce02f2736a0db8bcd10b9b793f1",
+  "w": 650
+ },
+ "M_Bison": {
+  "h": 252,
+  "md5": "3d8f600d744bda21e0d67943d1605a4f",
+  "w": 757
+ },
+ "Magneto": {
+  "h": 255,
+  "md5": "61f174ccefceb873bca6961d05e068b0",
+  "w": 689
+ },
+ "Marrow": {
+  "h": 216,
+  "md5": "7804a4c79bf399473f33d4d4e9cfc1fd",
+  "w": 685
+ },
+ "Mega_Man": {
+  "h": 193,
+  "md5": "8badb0a568eb9f99a6374d581bdab9cc",
+  "w": 522
+ },
+ "Morrigan": {
+  "h": 273,
+  "md5": "45c40f8f60381b2307156657e5838e6c",
+  "w": 700
+ },
+ "Omega_Red": {
+  "h": 291,
+  "md5": "f5d28e8cc2621f515284a6488268d83d",
+  "w": 783
+ },
+ "Psylocke": {
+  "h": 205,
+  "md5": "8e8a3f872dbd452ee8ba64da17ab27ad",
+  "w": 528
+ },
+ "Rogue": {
+  "h": 229,
+  "md5": "8c0238ca18cc1c57b557c90274e7241e",
+  "w": 710
+ },
+ "Roll": {
+  "h": 126,
+  "md5": "a8c00cf6cf310c113b7d3d5950807f15",
+  "w": 276
+ },
+ "Ruby_Heart": {
+  "h": 244,
+  "md5": "b822a8331845fd34d7dd4519aa065593",
+  "w": 567
+ },
+ "Ryu": {
+  "h": 183,
+  "md5": "24c839d9a31fae704b3a75992d3e4af2",
+  "w": 458
+ },
+ "Sabretooth": {
+  "h": 278,
+  "md5": "bbc732ea513211a762e7e728f056079b",
+  "w": 759
+ },
+ "Sakura": {
+  "h": 236,
+  "md5": "f5dbd61097675f66798812aa5be7ba05",
+  "w": 737
+ },
+ "Sentinel": {
+  "h": 366,
+  "md5": "f0acce13c5c1a1c55e55f3b823c1daac",
+  "w": 895
+ },
+ "Servbot": {
+  "h": 158,
+  "md5": "ad2e41ffcf1a2707eafaea8a4a858ecf",
+  "w": 810
+ },
+ "Shuma-Gorath": {
+  "h": 224,
+  "md5": "0a7e7c9fd092abd20456a8f496ac466c",
+  "w": 960
+ },
+ "Silver_Samurai": {
+  "h": 265,
+  "md5": "46de93ffec46efd87d34de78e51a7c8d",
+  "w": 776
+ },
+ "SonSon": {
+  "h": 256,
+  "md5": "4d5524d13dc9e74b3498bbb734b2a807",
+  "w": 1033
+ },
+ "Spider-Man": {
+  "h": 264,
+  "md5": "118131a22736ce928cdc288c28a1cc80",
+  "w": 556
+ },
+ "Spiral": {
+  "h": 237,
+  "md5": "a988bb2a825014e10ddd45fc6d0383a7",
+  "w": 765
+ },
+ "Storm": {
+  "h": 275,
+  "md5": "119c59de0a889f03ae5ce0c665c436c5",
+  "w": 752
+ },
+ "Strider": {
+  "h": 298,
+  "md5": "0da91ebf056a0130a2c82485d6b6a710",
+  "w": 942
+ },
+ "Thanos": {
+  "h": 306,
+  "md5": "8850be2e0c95b714522d3bdee70e59d1",
+  "w": 882
+ },
+ "Tron_Bonne": {
+  "h": 262,
+  "md5": "68968d9a7884b8a5dca079a368bb4b22",
+  "w": 1001
+ },
+ "Venom": {
+  "h": 289,
+  "md5": "07ddad50589dad21bec3f178166eccd5",
+  "w": 798
+ },
+ "War_Machine": {
+  "h": 233,
+  "md5": "a501666de992b9d2ab8c95dc4401acba",
+  "w": 633
+ },
+ "Wolverine": {
+  "h": 229,
+  "md5": "29842a818b939473031b975aa9b92b63",
+  "w": 585
+ },
+ "Wolverine_Bone_Claw": {
+  "h": 281,
+  "md5": "b2fb7414013a6c9d17867388c3d4e34d",
+  "w": 719
+ },
+ "Zangief": {
+  "h": 270,
+  "md5": "24e9e6280bf8988857d869416143c232",
+  "w": 769
+ }
+}

@@ -36,30 +36,100 @@ def key_for(char, filename):
     return f"{char}/{filename}"
 
 
-def char_folders():
-    """Character subfolders that actually contain palettes."""
-    root = config.SKINS
-    if not os.path.isdir(root):
-        return []
-    out = []
-    for d in sorted(os.listdir(root)):
-        full = os.path.join(root, d)
-        if os.path.isdir(full) and any(
-                f.lower().endswith(".png") for f in os.listdir(full)):
-            out.append(d)
-    return out
+def _path(char, filename):
+    """Resolve a palette path; custom/<file> lives under the user's custom tree."""
+    if filename.startswith("custom/"):
+        return os.path.join(config.CUSTOM, "skins", char, filename[7:])
+    return os.path.join(config.SKINS, char, filename)
 
 
-def list_palettes(char):
-    d = os.path.join(config.SKINS, char)
+def _pngs_in(d):
     if not os.path.isdir(d):
         return []
     return sorted(f for f in os.listdir(d) if f.lower().endswith(".png"))
 
 
+def char_folders():
+    """Character subfolders that contain palettes (gallery or custom)."""
+    names = set()
+    for root in (config.SKINS, os.path.join(config.CUSTOM, "skins")):
+        if not os.path.isdir(root):
+            continue
+        for d in os.listdir(root):
+            if _pngs_in(os.path.join(root, d)):
+                names.add(d)
+    return sorted(names)
+
+
+def list_palettes(char):
+    """Gallery files plus the user's drop-ins (shown as custom/<file>)."""
+    out = _pngs_in(os.path.join(config.SKINS, char))
+    out += [f"custom/{f}"
+            for f in _pngs_in(os.path.join(config.CUSTOM, "skins", char))]
+    return out
+
+
+# ---- custom-sheet validation (mirrors the engine's validate_sheet) ----
+_specs = None
+_validate_cache = {}    # (char, fn) -> (mtime, (ok, reason))
+
+
+def _sheet_specs():
+    global _specs
+    if _specs is None:
+        _specs = {}
+        for base in (config.resource_dir(), config.app_dir()):
+            p = os.path.join(base, "mvc2_data", "sheet_specs.json")
+            try:
+                if os.path.isfile(p):
+                    with open(p, "r", encoding="utf-8") as f:
+                        _specs = json.load(f)
+                    break
+            except Exception:
+                pass
+    return _specs
+
+
+def validate_custom(char, filename):
+    """(ok, reason). Gallery files always pass; custom drop-ins must be an
+    indexed PNG with this character's exact sheet size and sprite layout."""
+    if not filename.startswith("custom/"):
+        return True, ""
+    spec = _sheet_specs().get(char)
+    if not spec:
+        return True, ""
+    path = _path(char, filename)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return False, "file missing"
+    hit = _validate_cache.get((char, filename))
+    if hit and hit[0] == mtime:
+        return hit[1]
+    import hashlib
+    try:
+        with Image.open(path) as im:
+            if im.mode != "P":
+                result = (False, "not an indexed (P-mode) PNG")
+            elif im.size != (spec["w"], spec["h"]):
+                other = [n for n, s in _sheet_specs().items()
+                         if (s["w"], s["h"]) == im.size]
+                hint = (f" (size matches {other[0]})" if other
+                        else " (not a gallery-format sheet)")
+                result = (False, f"wrong sheet size for {char}{hint}")
+            elif hashlib.md5(im.tobytes()).hexdigest() != spec["md5"]:
+                result = (False, "sprite layout differs from the gallery "
+                                 "standard (colors would scramble in-game)")
+            else:
+                result = (True, "")
+    except Exception as e:
+        result = (False, f"unreadable ({e})")
+    _validate_cache[(char, filename)] = (mtime, result)
+    return result
+
+
 def _load_rgba(char, filename):
-    path = os.path.join(config.SKINS, char, filename)
-    with Image.open(path) as im:
+    with Image.open(_path(char, filename)) as im:
         return im.convert("RGBA")
 
 
@@ -138,7 +208,7 @@ def color_sort_key(char, filename):
     neighborhood / street / house number. Characters without a mapping fall
     back to the old most-pixels heuristic. Unreadable files sort last.
     """
-    path = os.path.join(config.SKINS, char, filename)
+    path = _path(char, filename)
     try:
         mtime = os.path.getmtime(path)
     except OSError:
@@ -211,7 +281,7 @@ def _char_weights(char, files):
         return w
     for fn in files:
         try:
-            with Image.open(os.path.join(config.SKINS, char, fn)) as im:
+            with Image.open(_path(char, fn)) as im:
                 if im.mode != "P":
                     continue
                 hist = im.histogram()
@@ -227,7 +297,7 @@ def _char_weights(char, files):
 
 
 def _tour_feat(char, fn, weights):
-    path = os.path.join(config.SKINS, char, fn)
+    path = _path(char, fn)
     try:
         mtime = os.path.getmtime(path)
     except OSError:

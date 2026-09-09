@@ -12,7 +12,7 @@ stays responsive. Flat imports (config/randomize/steamcfg), same as that app.
 """
 import os, sys, queue, threading, traceback
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
+from tkinter import ttk, filedialog, messagebox, scrolledtext, simpledialog
 
 from PIL import Image as PILImage, ImageDraw, ImageTk
 
@@ -22,6 +22,7 @@ import steamcfg
 import palettes
 import locks
 import stagegal
+import presets
 
 APP_TITLE = "MvC2 Palette Randomizer"
 
@@ -43,6 +44,11 @@ class App:
 
         self.seed_var = tk.StringVar()
 
+        # Relocate pre-1.0.3 root state files and ensure dirs BEFORE any tab
+        # reads verdicts/config from the new data/ folder.
+        config.migrate_state()
+        config.ensure_custom_dirs()
+
         self._build_header()
         self._build_tabs()
         self._build_log()
@@ -59,8 +65,11 @@ class App:
     def _build_header(self):
         top = ttk.Frame(self.root, padding=(14, 12, 14, 4))
         top.pack(fill="x")
-        ttk.Label(top, text="Marvel vs. Capcom 2 - Palette Randomizer",
-                  font=("Segoe UI", 15, "bold")).pack(anchor="w")
+        titlerow = ttk.Frame(top); titlerow.pack(fill="x")
+        ttk.Label(titlerow, text="Marvel vs. Capcom 2 - Palette Randomizer",
+                  font=("Segoe UI", 15, "bold")).pack(side="left")
+        ttk.Label(titlerow, text=f"v{config.VERSION}", foreground="#999",
+                  font=("Segoe UI", 9)).pack(side="right", pady=(6, 0))
         ttk.Label(top, text="Randomizes your curated character palettes every time you launch the game.",
                   foreground="#555").pack(anchor="w")
         self.status_lbl = ttk.Label(top, text="", font=("Segoe UI", 9))
@@ -94,32 +103,113 @@ class App:
         # stray idle block, which looks like it's stuck ~1/10 full)
 
     # ------------------------------------------------------------- setup tab
+    SETUP_WRAP = 900
+
     def _tab_setup(self, nb):
         t = ttk.Frame(nb, padding=14); nb.add(t, text="5. Setup")
         ttk.Label(t, text="Game install", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(t, justify="left", foreground="#555", text=(
-            "Your Steam install is detected automatically. If the game is on\n"
-            "another drive or isn't found, use “Change game folder…” to point at it.")
-        ).pack(anchor="w", pady=(4, 10))
+        ttk.Label(t, justify="left", foreground="#555", wraplength=self.SETUP_WRAP,
+                  text="Your Steam install is detected automatically. If the "
+                       "game is on another drive or isn't found, use "
+                       "“Change game folder…” to point at it."
+                  ).pack(anchor="w", pady=(2, 6))
 
         self.game_lbl = ttk.Label(t, text="", foreground="#333",
-                                  wraplength=660, justify="left")
+                                  wraplength=self.SETUP_WRAP, justify="left")
         self.game_lbl.pack(anchor="w", pady=(0, 2))
         ch = ttk.Button(t, text="Change game folder...", command=self.on_set_game)
-        ch.pack(anchor="w", pady=(0, 12))
+        ch.pack(anchor="w", pady=(0, 4))
         self._action_widgets.append(ch)
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
         ttk.Label(t, text="Auto-randomize on launch", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(t, foreground="#555", justify="left", text=(
-            "A one-time setup: this copies a short line to your clipboard and\n"
-            "shows where to paste it in Steam. After that, your palettes are\n"
-            "randomized automatically every time you launch the game.")
-        ).pack(anchor="w", pady=(4, 8))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="A one-time setup: this copies a short line to your "
+                       "clipboard and shows where to paste it in Steam. After "
+                       "that, your palettes are randomized automatically every "
+                       "time you launch the game."
+                  ).pack(anchor="w", pady=(2, 6))
         b = ttk.Button(t, text="Enable Auto-Randomize in Steam",
                        command=self.on_enable_steam)
         b.pack(anchor="w")
         self._action_widgets.append(b)
+
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Label(t, text="Randomization scope", font=("Segoe UI", 11, "bold")
+                  ).pack(anchor="w")
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="By default the randomizer uses both the items you've "
+                       "kept and any you haven't reviewed yet. Uncheck this to "
+                       "randomize using ONLY your kept selections (palettes and "
+                       "stages you never reviewed are left out; a character or "
+                       "slot with nothing kept keeps its default)."
+                  ).pack(anchor="w", pady=(2, 6))
+        self.incl_unrev_var = tk.BooleanVar(
+            value=bool(randomize.get_config().get("include_unreviewed", True)))
+        ttk.Checkbutton(t, text="Include unreviewed items when randomizing",
+                        variable=self.incl_unrev_var,
+                        command=self._on_incl_unrev_toggle).pack(anchor="w")
+
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Label(t, text="Gallery content", font=("Segoe UI", 11, "bold")
+                  ).pack(anchor="w")
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Downloads and updates everything from the community "
+                       "gallery: palettes, stages, previews, and curated "
+                       "mixes. Safe to run any time - only new or updated "
+                       "files are fetched, and your reviews and drop-ins are "
+                       "preserved."
+                  ).pack(anchor="w", pady=(2, 6))
+        gd = ttk.Button(t, text="Download / Update gallery content",
+                        command=self.on_download)
+        gd.pack(anchor="w")
+        self._action_widgets.append(gd)
+
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Label(t, text="Curated mixes", font=("Segoe UI", 11, "bold")
+                  ).pack(anchor="w")
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Start from someone else's curation instead of reviewing "
+                       "thousands of palettes yourself. \"Fresh start\" adopts "
+                       "the whole mix; \"fill gaps\" only judges what you "
+                       "haven't. Your own drop-ins are never touched, and you "
+                       "can export your curation to share."
+                  ).pack(anchor="w", pady=(2, 6))
+        prow = ttk.Frame(t); prow.pack(anchor="w")
+        self.preset_var = tk.StringVar()
+        self.preset_combo = ttk.Combobox(prow, textvariable=self.preset_var,
+                                         state="readonly", width=34, values=[])
+        self.preset_combo.pack(side="left")
+        self.preset_combo.bind("<<ComboboxSelected>>",
+                               lambda e: self._preset_info())
+        pa = ttk.Button(prow, text="Apply (fresh start)",
+                        command=lambda: self.on_apply_preset("replace"))
+        pa.pack(side="left", padx=(8, 0)); self._action_widgets.append(pa)
+        pf = ttk.Button(prow, text="Apply (fill gaps)",
+                        command=lambda: self.on_apply_preset("fill"))
+        pf.pack(side="left", padx=(6, 0)); self._action_widgets.append(pf)
+        pe = ttk.Button(prow, text="Export mine...",
+                        command=self.on_export_preset)
+        pe.pack(side="left", padx=(6, 0)); self._action_widgets.append(pe)
+        self.preset_lbl = ttk.Label(t, text="", foreground="#666",
+                                    wraplength=self.SETUP_WRAP)
+        self.preset_lbl.pack(anchor="w", pady=(4, 0))
+        self._presets = []
+        self._refresh_presets()
+
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Label(t, text="Danger zone", font=("Segoe UI", 11, "bold"),
+                  foreground="#b00").pack(anchor="w")
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Rejected palettes normally just stay hidden and out of "
+                       "the pool. This permanently deletes their files from "
+                       "disk - there is NO way to recover them short of "
+                       "re-downloading the gallery."
+                  ).pack(anchor="w", pady=(2, 6))
+        dz = ttk.Button(t, text="Permanently delete rejected palette files...",
+                        command=self.on_remove_rejected)
+        dz.pack(anchor="w")
+        self._action_widgets.append(dz)
 
     # ---------------------------------------------------------- palettes tab
     GRID_COLS = 5
@@ -150,7 +240,7 @@ class App:
         self.unrev_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(top, text="Review new", variable=self.unrev_var,
                         command=self._on_unrev_toggle).pack(side="left", padx=(12, 0))
-        self.hiderej_var = tk.BooleanVar(value=False)
+        self.hiderej_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(top, text="Hide rejected", variable=self.hiderej_var,
                         command=self._on_char_change).pack(side="left", padx=(8, 0))
         self.cmp_btn = ttk.Button(top, text="Compare selected...", command=self.on_compare)
@@ -164,22 +254,11 @@ class App:
                             command=lambda: self._jump_unreviewed(1))
         nx_btn.pack(side="left", padx=(2, 0))
         self._action_widgets.append(nx_btn)
-        dl = ttk.Button(top, text="Download / Update", command=self.on_download)
-        dl.pack(side="right"); self._action_widgets.append(dl)
-
         self.palettes_lbl = ttk.Label(t, text="", foreground="#555")
         self.palettes_lbl.pack(anchor="w", pady=(6, 6))
 
-        # Footer, kept well away from Download so it's not an easy mis-click.
-        footer = ttk.Frame(t); footer.pack(side="bottom", fill="x", pady=(8, 0))
-        ttk.Separator(footer, orient="horizontal").pack(fill="x", pady=(0, 6))
-        rr = ttk.Button(footer, text="Delete rejected files...",
-                        command=self.on_remove_rejected)
-        rr.pack(side="left"); self._action_widgets.append(rr)
-        ttk.Label(footer, foreground="#888",
-                  text="Permanently removes palettes you've marked Reject from disk."
-                  ).pack(side="left", padx=(10, 0))
-
+        # Rejected palettes stay on disk (use "Hide rejected" to tidy the
+        # view); permanent deletion lives in the Setup tab's danger zone.
         self.pal_body = ttk.Frame(t); self.pal_body.pack(fill="both", expand=True)
         self._build_image_view(self.pal_body)
         self._build_grid_view(self.pal_body)
@@ -264,6 +343,7 @@ class App:
             self._slock_populate()
         elif text.endswith("Stage Gallery"):
             self._load_stage_gallery()
+            self.stg_canvas.focus_set()
 
     def _on_img_resize(self, e=None):
         job = getattr(self, "_img_job", None)
@@ -406,7 +486,7 @@ class App:
         unrev = sum(self._unrev.values())
         self.palettes_lbl.config(
             text=(f"{total:,} palettes    ·    {unrev} unreviewed    ·    {rej} rejected"
-                  if total else "No palettes yet - click 'Download / Update'."))
+                  if total else "No palettes yet - run Download / Update on the Setup tab."))
 
     # ---- image-review view ----
     def _on_unrev_toggle(self):
@@ -513,6 +593,12 @@ class App:
             self.cur_status_lbl.config(text="REJECTED", foreground=self.REJECT_COLOR)
         else:
             self.cur_status_lbl.config(text="not reviewed", foreground=self.NEUTRAL_COLOR)
+        if fn.startswith("custom/"):
+            ok, why = palettes.validate_custom(char, fn)
+            if not ok:
+                self.cur_status_lbl.config(
+                    text=f"INVALID (never randomized) - {why}",
+                    foreground=self.REJECT_COLOR)
         self.keep_btn.config(text=("✓ Kept" if v == palettes.KEEP else "Keep (Y)"))
         self.reject_btn.config(text=("✓ Rejected" if v == palettes.REJECT else "Reject (N)"))
         self.clear_btn.config(text="Clear (C)")
@@ -837,6 +923,18 @@ class App:
             messagebox.showinfo("Nothing to delete",
                                 "No rejected palette files are on disk.")
             return
+        if not messagebox.askyesno(
+                "Are you SURE?",
+                f"You are about to PERMANENTLY DELETE {len(keys)} rejected "
+                "palette file(s) from disk.\n\n"
+                "There is NO recovery - only re-downloading the gallery can "
+                "bring gallery files back, and your own files would be gone "
+                "for good.\n\n"
+                "Rejected palettes are already excluded from randomization "
+                "and hidden from view - you do NOT need to delete them.\n\n"
+                "Continue to the file list?",
+                icon="warning", default="no"):
+            return
         if not self._confirm_delete(keys):
             return
         n = palettes.remove_rejected()
@@ -871,10 +969,11 @@ class App:
         t = ttk.Frame(nb, padding=14); nb.add(t, text="4. Lock Selections")
         ttk.Label(t, text="Lock palettes to buttons", font=("Segoe UI", 11, "bold")
                   ).pack(anchor="w")
-        ttk.Label(t, foreground="#555", justify="left", text=(
-            "Pin a specific palette to a button slot so the randomizer always uses\n"
-            "it for that character. Leave a slot on \"(random)\" to keep shuffling it.")
-        ).pack(anchor="w", pady=(4, 10))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Pin a specific palette to a button slot so the "
+                       "randomizer always uses it for that character. Leave a "
+                       "slot on \"(random)\" to keep shuffling it."
+                  ).pack(anchor="w", pady=(2, 8))
 
         top = ttk.Frame(t); top.pack(fill="x", pady=(0, 8))
         ttk.Label(top, text="Character:").pack(side="left")
@@ -917,10 +1016,11 @@ class App:
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=12)
         ttk.Label(t, text="Lock stages to slots", font=("Segoe UI", 11, "bold")
                   ).pack(anchor="w")
-        ttk.Label(t, foreground="#555", justify="left", text=(
-            "Pin a stage slot to one stage from your pool so it never rolls.\n"
-            "Pick \"(random)\" to let the slot shuffle again. Saved instantly.")
-        ).pack(anchor="w", pady=(4, 8))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Pin a stage slot to one stage from your pool so it "
+                       "never rolls. Pick \"(random)\" to let the slot shuffle "
+                       "again. Saved instantly."
+                  ).pack(anchor="w", pady=(2, 8))
         srow = ttk.Frame(t); srow.pack(anchor="w")
         ttk.Label(srow, text="Stage:").pack(side="left")
         self.slock_stage_var = tk.StringVar()
@@ -1092,19 +1192,32 @@ class App:
         self.stg_sel_sub = ttk.Label(left, text="", foreground="#666",
                                      wraplength=225)
         self.stg_sel_sub.pack(anchor="w")
-        self.stg_pool_btn = ttk.Button(left, text="-", width=30,
-                                       command=self._stage_pool_toggle)
-        self.stg_pool_btn.pack(anchor="w", pady=(6, 0))
+        self.stg_verdict_lbl = ttk.Label(left, text="", font=("Segoe UI", 9))
+        self.stg_verdict_lbl.pack(anchor="w", pady=(4, 0))
+        vb = ttk.Frame(left); vb.pack(anchor="w", pady=(4, 0))
+        self.stg_keep_btn = ttk.Button(
+            vb, text="Keep (Y)", width=9,
+            command=lambda: self._stage_set(stagegal.KEEP, advance=True))
+        self.stg_keep_btn.pack(side="left")
+        self.stg_clear_btn = ttk.Button(vb, text="Clear (C)", width=9,
+                                        command=lambda: self._stage_set(None))
+        self.stg_clear_btn.pack(side="left", padx=(4, 0))
+        self.stg_rej_btn = ttk.Button(
+            vb, text="Reject (N)", width=10,
+            command=lambda: self._stage_set(stagegal.REJECT, advance=True))
+        self.stg_rej_btn.pack(side="left", padx=(4, 0))
 
         ttk.Separator(left, orient="horizontal").pack(fill="x", pady=8)
         ttk.Label(left, text="Show", font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        self.stage_filter = tk.StringVar(value="pool")
-        fr = ttk.Frame(left); fr.pack(anchor="w")
-        for val, txt in (("all", "All"), ("pool", "In pool"),
-                         ("out", "Excluded")):
-            ttk.Radiobutton(fr, text=txt, value=val, variable=self.stage_filter,
-                            command=self._stage_cards_build
-                            ).pack(side="left", padx=(0, 6))
+        self.stg_hiderej_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(left, text="Hide rejected", variable=self.stg_hiderej_var,
+                        command=self._stage_refilter).pack(anchor="w")
+        self.stg_shownew_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(left, text="Show new only", variable=self.stg_shownew_var,
+                        command=self._stage_refilter).pack(anchor="w")
+        self.stg_assign_btn = ttk.Button(left, text="",
+                                         command=self.on_assign_customs)
+        # packed only when there are pending drop-ins (see _load_stage_gallery)
         self.stage_lbl = ttk.Label(left, text="", foreground="#666",
                                    wraplength=225, justify="left")
         self.stage_lbl.pack(anchor="w", pady=(10, 0))
@@ -1138,7 +1251,15 @@ class App:
             self._stg_minis[vk] = (mf, ml, mc)
 
         body = ttk.Frame(right); body.pack(fill="both", expand=True, pady=(8, 0))
-        self.stg_canvas = tk.Canvas(body, highlightthickness=0, background="#2d2d2d")
+        self.stg_canvas = tk.Canvas(body, highlightthickness=0, background="#2d2d2d",
+                                    takefocus=1)
+        # Y/N/C fast review (keep / reject / clear), advancing to next visible
+        self.stg_canvas.bind("<y>", lambda e: self._stage_set(stagegal.KEEP, advance=True))
+        self.stg_canvas.bind("<Y>", lambda e: self._stage_set(stagegal.KEEP, advance=True))
+        self.stg_canvas.bind("<n>", lambda e: self._stage_set(stagegal.REJECT, advance=True))
+        self.stg_canvas.bind("<N>", lambda e: self._stage_set(stagegal.REJECT, advance=True))
+        self.stg_canvas.bind("<c>", lambda e: self._stage_set(None))
+        self.stg_canvas.bind("<C>", lambda e: self._stage_set(None))
         vsb = ttk.Scrollbar(body, orient="vertical", command=self.stg_canvas.yview)
         self.stg_canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
@@ -1195,12 +1316,16 @@ class App:
         if self._stage_built and not force:
             return
         self._stage_secs = stagegal.sections()
+        self._stage_new = stagegal.new_keys(self._stage_secs)
         keep = self.stg_tree.selection()
         self.stg_tree.delete(*self.stg_tree.get_children())
         verdicts = stagegal.load_verdicts()
         for i, (title, vs) in enumerate(self._stage_secs):
             n = sum(1 for v in vs if verdicts.get(v["key"]) != "delete")
+            nnew = sum(1 for v in vs if v["key"] in self._stage_new)
             short = title.split("  -  ", 1)[-1].split("   (")[0]
+            if nnew:
+                short = f"★ {short}"      # star: this slot has new (unreviewed) stages
             self.stg_tree.insert("", "end", iid=str(i), text=short,
                                  values=(f"{n}/{len(vs)}",))
         if self._stage_secs:
@@ -1210,11 +1335,81 @@ class App:
             for w in self.stg_inner.winfo_children():
                 w.destroy()
             tk.Label(self.stg_inner, text="No stage data yet - run Download / "
-                     "Update on the Palette Gallery tab.",
+                     "Update on the Setup tab.",
                      background="#2d2d2d", foreground="#aaa",
                      font=("Segoe UI", 11)).pack(padx=20, pady=20)
         self._stage_built = True
         self._update_stage_counts()
+        pending = stagegal.pending_customs()
+        if pending:
+            self.stg_assign_btn.config(
+                text=f"Assign {len(pending)} custom stage file(s)...")
+            self.stg_assign_btn.pack(anchor="w", pady=(8, 0),
+                                     before=self.stage_lbl)
+        else:
+            self.stg_assign_btn.pack_forget()
+
+    def on_assign_customs(self):
+        """Ask which stage each unrecognized drop-in belongs to, then rename
+        it into the convention so it joins the pools."""
+        pending = stagegal.pending_customs()
+        if not pending:
+            return
+        m = stagegal.manifest() or {}
+        slot_names = {e.get("id"): e.get("n", e.get("id"))
+                      for e in m.get("stages", [])}
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Assign custom stage files")
+        dlg.transient(self.root); dlg.grab_set()
+        ttk.Label(dlg, padding=(12, 10, 12, 4), justify="left", text=(
+            "These files don't say which stage they belong to. Pick the "
+            "stage for each\n(only stages whose file sizes match are "
+            "offered). Full POL+TEX stages usually\nbelong to Training.")
+        ).pack(anchor="w")
+        rows = []
+        body = ttk.Frame(dlg, padding=(12, 4)); body.pack(fill="both", expand=True)
+        for item in pending:
+            row = ttk.Frame(body); row.pack(fill="x", pady=3)
+            parts = [p for p in ("tex", "pol") if item.get(p)]
+            desc = f"{item['stem']}  ({'+'.join(parts) if parts else 'unknown files'})"
+            ttk.Label(row, text=desc, width=38).pack(side="left")
+            cands = stagegal.candidate_slots(item)
+            cmap = {}
+            for c in cands:
+                label = ("Training (full custom stage)" if c == "XX"
+                         else f"STG {c} - {slot_names.get(c, c)}")
+                cmap[label] = c
+            var = tk.StringVar()
+            if cmap:
+                cb = ttk.Combobox(row, textvariable=var, state="readonly",
+                                  width=34, values=["(skip)"] + list(cmap))
+                cb.set("(skip)")
+                cb.pack(side="left", padx=(8, 0))
+                rows.append((item, var, cmap))
+            else:
+                ttk.Label(row, foreground="#b00",
+                          text="no stage matches these file sizes"
+                          ).pack(side="left", padx=(8, 0))
+        done = {"n": 0}
+
+        def apply():
+            for item, var, cmap in rows:
+                target = cmap.get(var.get())
+                if target:
+                    try:
+                        newbase = stagegal.assign_custom(item, target)
+                        self.logln(f"Assigned {item['stem']} -> {newbase}")
+                        done["n"] += 1
+                    except OSError as e:
+                        messagebox.showerror("Rename failed", str(e))
+            dlg.destroy()
+            if done["n"]:
+                self._load_stage_gallery(force=True)
+
+        btns = ttk.Frame(dlg, padding=12); btns.pack(fill="x")
+        ttk.Button(btns, text="Apply", command=apply).pack(side="right")
+        ttk.Button(btns, text="Cancel", command=dlg.destroy
+                   ).pack(side="right", padx=(0, 8))
 
     def _stage_slot_variants(self):
         sel = self.stg_tree.selection()
@@ -1225,24 +1420,30 @@ class App:
     def _on_stage_slot(self):
         variants = self._stage_slot_variants()
         self._stage_cards_build()
-        verdicts = stagegal.load_verdicts()
-        in_pool = [v for v in variants if verdicts.get(v["key"]) != "delete"]
-        if in_pool:
-            self._stage_select_variant(in_pool[0])
+        if self._stg_visible:
+            self._stage_select_variant(self._stg_visible[0])
+        else:
+            self._stage_clear_selection()
+
+    def _stage_refilter(self):
+        """Filter checkbox changed: rebuild and land on the first visible card."""
+        self._stage_cards_build()
+        cur = self._stg_cur_variant
+        if cur and cur["key"] in self._stg_cards:
+            return                       # current still visible; keep it
+        if self._stg_visible:
+            self._stage_select_variant(self._stg_visible[0])
         else:
             self._stage_clear_selection()
 
     def _stage_clear_selection(self):
-        """Nothing in this stage's pool: blank hero + a hint."""
         self._stg_cur_variant = None
-        sel = self.stg_tree.selection()
-        name = (self.stg_tree.item(sel[0], "text") if sel else "this stage")
-        self.stg_hero.config(image="", text=f"No stages selected for {name}",
+        self.stg_hero.config(image="", text="No stages for this slot",
                              width=42, height=14)
         self._hero_img = None
         self.stg_sel_name.config(text="-")
         self.stg_sel_sub.config(text="")
-        self.stg_pool_btn.config(text="-")
+        self.stg_verdict_lbl.config(text="")
         for _vk, (mf, ml, _mc) in self._stg_minis.items():
             ml.config(image="", text="")
             ml._img = None
@@ -1254,15 +1455,14 @@ class App:
         self._stg_cards = {}
         variants = self._stage_slot_variants()
         verdicts = stagegal.load_verdicts()
-        filt = self.stage_filter.get()
-        if filt == "pool":
-            shown = [v for v in variants if verdicts.get(v["key"]) != "delete"]
-        elif filt == "out":
-            shown = [v for v in variants if verdicts.get(v["key"]) == "delete"]
-        else:
-            shown = variants
+        shown = variants
+        if self.stg_hiderej_var.get():
+            shown = [v for v in shown if verdicts.get(v["key"]) != "delete"]
+        if self.stg_shownew_var.get():
+            shown = [v for v in shown if v["key"] not in verdicts]
         base = [v for v in shown if not v.get("xx")]
         extra = [v for v in shown if v.get("xx")]
+        self._stg_visible = base + extra   # display order, for Y/N navigation
         # per-card chrome: 10 grid gap + 6 pool border + 6 selection ring.
         # Cards are sized as if at least 3 sat per row, so a slot with 1-2
         # stages shows them at the same familiar size (and fully on screen)
@@ -1311,10 +1511,19 @@ class App:
             self._stage_thumb_cache[ck] = img
         return img
 
+    def _stage_border(self, key, verdicts):
+        """Verdict colour: gold = new (no verdict), green = keep, red = reject."""
+        v = verdicts.get(key)
+        if v == "keep":
+            return self.KEEP_COLOR
+        if v == "delete":
+            return self.REJECT_COLOR
+        return self.NEUTRAL_COLOR            # new / unreviewed
+
     def _stage_card(self, parent, i, cols, v, verdicts):
-        """Image-only card: pool state = outer border, selection = inner ring."""
-        in_pool = verdicts.get(v["key"]) != "delete"
-        color = self.KEEP_COLOR if in_pool else self.REJECT_COLOR
+        """Image-only card: verdict = outer border, selection = inner ring.
+        Left-click selects; right-click cycles new -> keep -> reject -> new."""
+        color = self._stage_border(v["key"], verdicts)
         cell = tk.Frame(parent, highlightthickness=3, background="#2d2d2d",
                         highlightbackground=color, highlightcolor=color)
         cell.grid(row=i // cols, column=i % cols, padx=5, pady=5, sticky="n")
@@ -1324,8 +1533,9 @@ class App:
         pic.pack(padx=3, pady=3)
         self._stg_cards[v["key"]] = (cell, inner)
         for w in (cell, inner, pic):
-            w.bind("<Button-1>", lambda e, vv=v: self._stage_select_variant(vv))
-            w.bind("<Button-3>", lambda e, vv=v: self._stage_pool_toggle(vv))
+            w.bind("<Button-1>", lambda e, vv=v: (self._stage_select_variant(vv),
+                                                  self.stg_canvas.focus_set()))
+            w.bind("<Button-3>", lambda e, vv=v: self._stage_cycle(vv))
 
     # ---- selection / hero ----
     def _stage_select_variant(self, v):
@@ -1337,9 +1547,14 @@ class App:
             self._stg_cards[v["key"]][1].config(background=self.SELECT_COLOR)
         kind = stagegal.KIND_LABEL.get(v["kind"], v["kind"])
         self.stg_sel_name.config(text=v["name"])
-        self.stg_sel_sub.config(text=f"{v['author']} · {kind}"
-                                + (f" · {v['game']}" if v.get("game") else ""))
-        self._refresh_pool_btn()
+        if v.get("invalid"):
+            self.stg_sel_sub.config(foreground=self.REJECT_COLOR,
+                                    text=f"INVALID (never rolled) - {v['invalid']}")
+        else:
+            self.stg_sel_sub.config(foreground="#666",
+                                    text=f"{v['author']} · {kind}"
+                                    + (f" · {v['game']}" if v.get("game") else ""))
+        self._refresh_verdict_lbl()
         view = "C" if "C" in v.get("views", {}) else next(iter(v.get("views", {})), None)
         self._stage_set_view(view or "C")
         self._stage_fill_minis()
@@ -1400,53 +1615,100 @@ class App:
         tk.Label(dlg, image=ph, bd=0).pack(padx=6, pady=6)
         dlg._img = ph
 
-    # ---- pool membership ----
-    def _stage_pool_toggle(self, v=None):
+    def _stage_update_tree_row(self):
+        sel = self.stg_tree.selection()
+        if not sel or not self._stage_secs:
+            return
+        title, vs = self._stage_secs[int(sel[0])]
+        verdicts = stagegal.load_verdicts()
+        n = sum(1 for x in vs if verdicts.get(x["key"]) != "delete")
+        nnew = sum(1 for x in vs if x["key"] not in verdicts)
+        short = title.split("  -  ", 1)[-1].split("   (")[0]
+        if nnew:
+            short = f"★ {short}"
+        self.stg_tree.item(sel[0], text=short, values=(f"{n}/{len(vs)}",))
+
+    # ---- verdicts (keep / reject / clear) ----
+    def _stage_set(self, verdict, v=None, advance=False):
+        """Set a variant's verdict. With advance, move to the next visible
+        stage (for Y/N fast review); otherwise keep the current selection."""
         v = v or self._stg_cur_variant
         if not v:
             return
-        in_pool = stagegal.toggle(v["key"])
-        if v["key"] in self._stg_cards:
-            color = self.KEEP_COLOR if in_pool else self.REJECT_COLOR
-            self._stg_cards[v["key"]][0].config(highlightbackground=color,
-                                                highlightcolor=color)
-        # refresh the tree count for the selected slot
-        sel = self.stg_tree.selection()
-        if sel and self._stage_secs:
-            title, vs = self._stage_secs[int(sel[0])]
-            verdicts = stagegal.load_verdicts()
-            n = sum(1 for x in vs if verdicts.get(x["key"]) != "delete")
-            self.stg_tree.item(sel[0], values=(f"{n}/{len(vs)}",))
-        if v is self._stg_cur_variant:
-            self._refresh_pool_btn()
+        key = v["key"]
+        vis = list(self._stg_visible)
+        idx = next((i for i, x in enumerate(vis) if x["key"] == key), None)
+        stagegal.set_verdict(key, verdict)
+        if verdict is None:
+            self._stage_new.add(key)
+        else:
+            self._stage_new.discard(key)
+        self._stage_cards_build()          # a filter may hide/show this card now
+        self._stage_update_tree_row()
         self._update_stage_counts()
 
-    def _refresh_pool_btn(self):
+        newvis = self._stg_visible
+        if advance and newvis:
+            pos = next((i for i, x in enumerate(newvis) if x["key"] == key), None)
+            target = (min(pos + 1, len(newvis) - 1) if pos is not None
+                      else min(idx if idx is not None else 0, len(newvis) - 1))
+            self._stage_select_variant(newvis[target])
+        elif key in self._stg_cards:
+            self._stage_select_variant(v)  # still visible: keep it selected
+        elif newvis:
+            self._stage_select_variant(newvis[0])
+        elif advance and not self._stage_next_slot():
+            self._stage_clear_selection()
+        else:
+            self._stage_clear_selection()
+        self.stg_canvas.focus_set()
+
+    def _stage_next_slot(self):
+        """Move to the next stage slot that has visible stages. True if moved."""
+        kids = list(self.stg_tree.get_children())
+        sel = self.stg_tree.selection()
+        start = kids.index(sel[0]) if sel and sel[0] in kids else -1
+        for step in range(1, len(kids) + 1):
+            self.stg_tree.selection_set(kids[(start + step) % len(kids)])
+            if self._stg_visible:
+                return True
+        return False
+
+    def _stage_cycle(self, v):
+        """Right-click: new -> keep -> reject -> new (no advance)."""
+        cur = stagegal.load_verdicts().get(v["key"])
+        nxt = {None: stagegal.KEEP, "keep": stagegal.REJECT,
+               "delete": None}.get(cur, stagegal.KEEP)
+        self._stage_select_variant(v)
+        self._stage_set(nxt, v)
+
+    def _refresh_verdict_lbl(self):
         v = self._stg_cur_variant
         if not v:
-            self.stg_pool_btn.config(text="-")
+            self.stg_verdict_lbl.config(text="")
             return
-        in_pool = stagegal.load_verdicts().get(v["key"]) != "delete"
-        self.stg_pool_btn.config(
-            text=("✔ In pool - click to exclude" if in_pool
-                  else "✖ Excluded - click to include"))
+        state = stagegal.load_verdicts().get(v["key"])
+        text, color = {"keep": ("Kept (in pool)", self.KEEP_COLOR),
+                       "delete": ("Rejected (excluded)", self.REJECT_COLOR)
+                       }.get(state, ("New - unreviewed", self.NEUTRAL_COLOR))
+        self.stg_verdict_lbl.config(text=text, foreground=color)
 
     def _update_stage_counts(self):
-        total, excluded = stagegal.counts()
+        total, rejected, new = stagegal.counts()
         self.stage_lbl.config(
-            text=(f"{total} stages · {total - excluded} in pool · "
-                  f"{excluded} excluded\n"
-                  "Left-click card: select/preview\n"
-                  "Right-click card: toggle in/out of pool")
+            text=(f"{total} stages · {total - rejected} in pool · "
+                  f"{new} new · {rejected} rejected\n"
+                  "Left-click: select   ·   Right-click: cycle new/keep/reject")
             if total else "")
 
     # --------------------------------------------------------- randomize tab
     def _tab_randomize(self, nb):
         t = ttk.Frame(nb, padding=14); nb.add(t, text="1. Randomize")
         ttk.Label(t, text="Randomize now", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(t, foreground="#555", justify="left", text=(
-            "Run a shuffle right now (also happens automatically on launch once\n"
-            "auto-randomize is set up).")).pack(anchor="w", pady=(4, 10))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Run a shuffle right now (also happens automatically on "
+                       "launch once auto-randomize is set up)."
+                  ).pack(anchor="w", pady=(2, 8))
 
         row = ttk.Frame(t); row.pack(anchor="w", pady=(0, 10))
         ttk.Label(row, text="Fixed seed (optional):").pack(side="left")
@@ -1470,10 +1732,11 @@ class App:
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=14)
         ttk.Label(t, text="Reset palettes", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(t, foreground="#555", justify="left", text=(
-            "Puts palettes back to vanilla for one character or everyone. Only\n"
-            "palettes are changed — any other game mods (stages, etc.) are left alone.")
-        ).pack(anchor="w", pady=(4, 8))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Puts palettes back to vanilla for one character or "
+                       "everyone. Only palettes are changed — any other game "
+                       "mods (stages, etc.) are left alone."
+                  ).pack(anchor="w", pady=(2, 8))
         rrow = ttk.Frame(t); rrow.pack(anchor="w")
         ttk.Label(rrow, text="Character:").pack(side="left")
         self.reset_char_var = tk.StringVar(value="All characters")
@@ -1488,18 +1751,96 @@ class App:
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=14)
         ttk.Label(t, text="Protected characters", font=("Segoe UI", 11, "bold")
                   ).pack(anchor="w")
-        ttk.Label(t, foreground="#555", justify="left", text=(
-            "Characters whose palettes were edited outside this app (e.g. with\n"
-            "PalMod) are protected automatically - the randomizer leaves them\n"
-            "alone so your work isn't overwritten. Unlock one to randomize over\n"
-            "it, or reset it to vanilla above.")
-        ).pack(anchor="w", pady=(4, 8))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Characters whose palettes were edited outside this app "
+                       "(e.g. with PalMod) are protected automatically - the "
+                       "randomizer leaves them alone so your work isn't "
+                       "overwritten. Unlock one to randomize over it, or reset "
+                       "it to vanilla above."
+                  ).pack(anchor="w", pady=(2, 8))
         self.prot_lbl = ttk.Label(t, text="None detected.", foreground="#555",
-                                  wraplength=680, justify="left")
+                                  wraplength=self.SETUP_WRAP, justify="left")
         self.prot_lbl.pack(anchor="w", pady=(0, 6))
         unl = ttk.Button(t, text="Unlock for randomizing...", command=self.on_unprotect)
         unl.pack(anchor="w")
         self._action_widgets.append(unl)
+
+    # ------------------------------------------------------------- presets
+    def _refresh_presets(self):
+        self._presets = presets.list_presets()
+        names = [f"{p['name']}  ({p['author']})" for p in self._presets]
+        self.preset_combo["values"] = names
+        if names and self.preset_var.get() not in names:
+            self.preset_var.set(names[0])
+        self._preset_info()
+
+    def _preset_info(self):
+        p = self._current_preset()
+        if p:
+            self.preset_lbl.config(
+                text=f"{p['keeps']:,} keeps · {p['rejects']:,} rejects · "
+                     f"{p['stages']} stage picks · updated {p['updated']}")
+        else:
+            self.preset_lbl.config(
+                text="No mixes downloaded yet - run Download / Update first.")
+
+    def _current_preset(self):
+        i = self.preset_combo.current()
+        return self._presets[i] if 0 <= i < len(self._presets) else None
+
+    def on_apply_preset(self, mode):
+        p = self._current_preset()
+        if not p:
+            messagebox.showinfo("No mix selected",
+                                "Download the gallery first (Setup tab) - "
+                                "curated mixes come with it.")
+            return
+        if mode == "replace":
+            msg = (f"Adopt \"{p['name']}\" wholesale?\n\n"
+                   "Your existing keep/reject choices for GALLERY palettes and "
+                   "stages will be REPLACED by this mix.\n"
+                   "(Your own drop-ins in custom/ are never affected.)")
+        else:
+            msg = (f"Fill gaps from \"{p['name']}\"?\n\n"
+                   "Only palettes and stages you haven't judged yet will take "
+                   "this mix's verdicts. Everything you've already decided "
+                   "stays yours.")
+        if not messagebox.askyesno("Apply curated mix", msg):
+            return
+        result = presets.apply_preset(p["path"], mode)
+        self.logln(f"Applied mix \"{result['name']}\" ({mode}): "
+                   f"{result['palettes']:,} palette and {result['stages']} "
+                   f"stage verdicts.")
+        self.refresh_status()
+        self._on_char_change()
+        self._stage_built = False     # stage gallery reloads on next visit
+        messagebox.showinfo("Mix applied",
+                            f"\"{result['name']}\" applied: "
+                            f"{result['palettes']:,} palette verdicts, "
+                            f"{result['stages']} stage picks.")
+
+    def on_export_preset(self):
+        name = simpledialog.askstring(
+            "Export your mix", "Name for your mix (shown to other users):",
+            parent=self.root)
+        if not name:
+            return
+        author = simpledialog.askstring(
+            "Export your mix", "Author name:", parent=self.root) or "anonymous"
+        out = filedialog.asksaveasfilename(
+            title="Save mix as", defaultextension=".json",
+            initialfile=f"{author.lower().replace(' ', '_')}.json",
+            filetypes=[("Preset JSON", "*.json")])
+        if not out:
+            return
+        stats = presets.export_preset(out, name, author)
+        self.logln(f"Exported mix \"{name}\": {stats['palettes']:,} palette "
+                   f"and {stats['stages']} stage verdicts -> {out}")
+        messagebox.showinfo(
+            "Mix exported",
+            f"Saved {stats['palettes']:,} palette and {stats['stages']} stage "
+            f"verdicts.\n\nTo share it, submit this file to the mvc2-skins "
+            f"repo's presets/ folder.")
 
     # ------------------------------------------------------------- status
     def refresh_status(self):
@@ -1618,6 +1959,13 @@ class App:
         messagebox.showinfo("Launch option copied",
                             steamcfg.instructions())
 
+    def _on_incl_unrev_toggle(self):
+        randomize.set_config_key("include_unreviewed",
+                                 bool(self.incl_unrev_var.get()))
+        self.logln("Randomize scope: "
+                   + ("kept + unreviewed." if self.incl_unrev_var.get()
+                      else "kept selections only."))
+
     def _on_stages_toggle(self):
         randomize.set_config_key("randomize_stages", bool(self.stages_var.get()))
         self.logln("Stage randomization "
@@ -1637,6 +1985,23 @@ class App:
     def _after_download(self):
         self._on_char_change()
         self._load_stage_gallery(force=True)
+        self._refresh_presets()
+        # Fresh user with an uncurated collection: offer a curated mix.
+        if self._presets and len(palettes.load_verdicts()) < 50:
+            p = self._presets[0]
+            if messagebox.askyesno(
+                    "Skip the curation?",
+                    f"A curated mix is available: \"{p['name']}\" by "
+                    f"{p['author']} ({p['keeps']:,} hand-picked palettes).\n\n"
+                    "Apply it now so you don't have to review thousands of "
+                    "palettes yourself? (You can change any of it later, or "
+                    "apply a different mix from the Setup tab.)"):
+                result = presets.apply_preset(p["path"], "replace")
+                self.logln(f"Applied mix \"{result['name']}\": "
+                           f"{result['palettes']:,} palette verdicts.")
+                self.refresh_status()
+                self._on_char_change()
+                self._stage_built = False
 
     def on_view_log(self):
         self.logln("\n" + "-" * 56)
@@ -1733,6 +2098,10 @@ class App:
 def _launch_mode(cmd):
     """Steam invoked us with the game command as args: randomize, then launch."""
     import subprocess
+    try:
+        config.migrate_state()                  # honor pre-1.0.3 verdicts
+    except Exception:
+        pass
     try:
         randomize.randomize(progress=None)      # silent; never block the game
     except Exception:

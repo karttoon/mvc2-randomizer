@@ -8,7 +8,7 @@ randomizer pool - everything is IN the pool by default. Keys match the
 engine's pool keys: d_00 (default), m_00 (author edit), m_CV (custom),
 c_04_68776038 / c_XX_a6920569 (community).
 """
-import os, json
+import os, json, re
 
 from PIL import Image
 
@@ -45,17 +45,20 @@ def save_verdicts(v):
         json.dump(v, f, indent=1, sort_keys=True)
 
 
-def toggle(key):
-    """Flip a variant in/out of the pool; returns True if now in pool."""
+# Three states, mirroring palettes: verdict absent = new/unreviewed,
+# "keep" = kept, "delete" = rejected.
+KEEP = "keep"
+REJECT = "delete"
+
+
+def set_verdict(key, verdict):
+    """Set a variant's verdict to KEEP/REJECT, or clear it (verdict=None)."""
     v = load_verdicts()
-    if v.get(key) == "delete":
-        del v[key]
-        in_pool = True
+    if verdict is None:
+        v.pop(key, None)
     else:
-        v[key] = "delete"
-        in_pool = False
+        v[key] = verdict
     save_verdicts(v)
-    return in_pool
 
 
 def _preview(name):
@@ -121,6 +124,32 @@ def sections():
         else:
             training_extra.append(v)
 
+    # Drop-in custom stages. Recognized names join their pool (marked with a
+    # reason and never rolled when invalid); unrecognized names show up via
+    # pending_customs() so the user can assign them to a stage in the app.
+    recognized, _pending = custom_stage_scan()
+    for (slot, name), files in sorted(recognized.items()):
+        invalid = None
+        if "tex" not in files:
+            invalid = "missing the tex file"
+        elif slot == "XX" and not files.get("pol"):
+            invalid = "a full custom stage needs both pol and tex"
+        elif slot != "XX":
+            d_tex = os.path.join(config.STAGES, "bins", f"d_{slot}_tex.BIN")
+            if (os.path.isfile(d_tex) and os.path.isfile(files["tex"])
+                    and os.path.getsize(files["tex"]) != os.path.getsize(d_tex)):
+                invalid = (f"TEX size doesn't fit slot {slot} - if it's a "
+                           f"full custom stage it belongs to Training")
+        thumb = files.get("thumb")
+        v = {"key": f"u_{slot}_{name}", "name": name, "author": "you",
+             "kind": "custom", "game": None, "thumb": thumb,
+             "views": ({"C": thumb} if thumb else {}),
+             "has_bin": invalid is None, "invalid": invalid}
+        if slot == "XX":
+            training_extra.append(v)
+        elif slot in by_slot:
+            by_slot[slot].append(v)
+
     # Custom & ported stages are part of the training slot's pool - show them
     # inside that section (flagged so the UI can divide them visually).
     for v in training_extra:
@@ -134,6 +163,97 @@ def sections():
             title += "   (incl. custom & ported stages)"
         out.append((title, by_slot[sid]))
     return out
+
+
+# ---- custom stage drop-ins -------------------------------------------------
+
+def custom_stage_scan():
+    """(recognized, pending) from custom/stages/.
+
+    recognized: {(slot_or_XX, name): {'tex': path, 'pol': path, 'thumb': path}}
+      - our convention  <slot|XX>_<Name>_<tex|pol>.BIN
+      - game-native     STG<slot><POL|TEX>.BIN
+    pending: [{'stem', 'tex', 'pol', 'other': [paths]}] - files whose names
+      don't say which stage they belong to; the app asks the user.
+    """
+    cdir = os.path.join(config.CUSTOM, "stages")
+    recognized, pending = {}, {}
+    if not os.path.isdir(cdir):
+        return recognized, []
+    for f in sorted(os.listdir(cdir)):
+        low = f.lower()
+        path = os.path.join(cdir, f)
+        if low.endswith(".jpg"):
+            m = re.match(r"^(XX|[0-9A-F]{2})_(.+)_thumb\.jpg$", f, re.I)
+            if m:
+                recognized.setdefault((m.group(1).upper(), m.group(2)),
+                                      {})["thumb"] = path
+            continue
+        if not low.endswith(".bin"):
+            continue
+        m = re.match(r"^(XX|[0-9A-F]{2})_(.+)_(tex|pol)\.BIN$", f, re.I)
+        if m:
+            recognized.setdefault((m.group(1).upper(), m.group(2)),
+                                  {})[m.group(3).lower()] = path
+            continue
+        m = re.match(r"^STG([0-9A-F]{2})(POL|TEX)\.BIN$", f, re.I)
+        if m:
+            slot = m.group(1).upper()
+            recognized.setdefault((slot, f"stg{slot.lower()}"),
+                                  {})[m.group(2).lower()] = path
+            continue
+        m = re.match(r"^(.+?)[ ._-]*(pol|tex)[ ._-]*\.bin$", f, re.I)
+        if m:
+            item = pending.setdefault(m.group(1).lower(),
+                                      {"stem": m.group(1), "tex": None,
+                                       "pol": None, "other": []})
+            item[m.group(2).lower()] = path
+        else:
+            stem = f[:-4]
+            item = pending.setdefault(stem.lower(),
+                                      {"stem": stem, "tex": None,
+                                       "pol": None, "other": []})
+            item["other"].append(path)
+    return recognized, list(pending.values())
+
+
+def pending_customs():
+    return custom_stage_scan()[1]
+
+
+def candidate_slots(item):
+    """Slots whose default TEX size matches this drop-in; pairs may also be a
+    full custom stage for the training pool ('XX' candidate, listed first)."""
+    out = []
+    if item.get("tex") and item.get("pol"):
+        out.append("XX")
+    if item.get("tex"):
+        try:
+            size = os.path.getsize(item["tex"])
+        except OSError:
+            return out
+        for slot in SLOTS:
+            d = os.path.join(config.STAGES, "bins", f"d_{slot}_tex.BIN")
+            if os.path.isfile(d) and os.path.getsize(d) == size:
+                out.append(slot)
+    return out
+
+
+def assign_custom(item, target):
+    """Rename a pending drop-in into the convention for `target` ('XX' or a
+    slot id). Returns the new base name, or raises on trouble."""
+    stem = re.sub(r"[^A-Za-z0-9\-]+", "-", item["stem"]).strip("-") or "stage"
+    cdir = os.path.join(config.CUSTOM, "stages")
+    base = f"{target}_{stem}"
+    n = 2
+    while any(os.path.exists(os.path.join(cdir, f"{base}_{p}.BIN"))
+              for p in ("tex", "pol")):
+        base = f"{target}_{stem}-{n}"
+        n += 1
+    for part in ("tex", "pol"):
+        if item.get(part):
+            os.rename(item[part], os.path.join(cdir, f"{base}_{part}.BIN"))
+    return base
 
 
 def load_locks():
@@ -156,13 +276,43 @@ def set_lock(slot, key):
         json.dump(locks, f, indent=1, sort_keys=True)
 
 
-def counts():
-    """(total variants, excluded) for the status line."""
-    secs = sections()
-    total = sum(len(vs) for _t, vs in secs)
+# ---- "new" = no verdict yet (mirrors palettes) -----------------------------
+
+def all_keys(secs=None):
+    secs = secs if secs is not None else sections()
+    return {v["key"] for _t, vs in secs for v in vs}
+
+
+def new_keys(secs=None):
+    """Variant keys with no verdict yet (never kept or rejected)."""
+    secs = secs if secs is not None else sections()
     v = load_verdicts()
-    excluded = sum(1 for _t, vs in secs for x in vs if v.get(x["key"]) == "delete")
-    return total, excluded
+    return {x["key"] for _t, vs in secs for x in vs if x["key"] not in v}
+
+
+def mark_all_seen():
+    """Acknowledge all currently-new variants by keeping them (they already
+    roll by default; this just clears the 'new' flag)."""
+    v = load_verdicts()
+    for key in all_keys():
+        v.setdefault(key, KEEP)
+    save_verdicts(v)
+
+
+def counts():
+    """(total, rejected, new) across all variants, for the status line."""
+    secs = sections()
+    v = load_verdicts()
+    total = new = rejected = 0
+    for _t, vs in secs:
+        for x in vs:
+            total += 1
+            verdict = v.get(x["key"])
+            if verdict == REJECT:
+                rejected += 1
+            elif verdict is None:
+                new += 1
+    return total, rejected, new
 
 
 def thumb_image(variant, width=200):

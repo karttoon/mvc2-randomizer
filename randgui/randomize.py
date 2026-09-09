@@ -19,7 +19,10 @@ def _engine():
     # The engine reads these module globals at call time; repoint them so a
     # frozen exe writes config/locks/last-run/verdicts next to itself, not into
     # the read-only PyInstaller extraction dir.
+    # STATE_DIR is where the engine reads/writes loose state (it derives
+    # gallery_verdicts.json from it); SCRIPT_DIR is the content root.
     engine.SCRIPT_DIR = config.DATA
+    engine.STATE_DIR = config.STATE
     engine.DEFAULT_CONFIG = config.CONFIG_JSON
     engine.DEFAULT_SKINS = config.SKINS
     engine.DEFAULT_LOCKS = config.LOCKS_TXT
@@ -29,6 +32,8 @@ def _engine():
     engine.STAGE_VERDICTS = config.STAGE_VERDICTS_JSON
     engine.STAGE_STATE = config.STAGE_STATE
     engine.STAGE_LOCKS = config.STAGE_LOCKS_JSON
+    engine.CUSTOM_DIR = config.CUSTOM
+    engine.PRESETS_DIR = config.PRESETS
     return engine
 
 
