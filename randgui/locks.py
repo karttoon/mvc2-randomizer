@@ -85,7 +85,7 @@ def _write(locks):
     # Preserve any folder present in the file that isn't in the canonical list.
     extra = sorted({f for (f, _b) in locks} - set(folders), key=str.lower)
     lines = [
-        "# MvC2 Palette Randomizer - Skin Locks",
+        "# MvC2 Randomizer - Skin Locks",
         "#",
         "# Each line is: Character_Name BUTTON=filename.png",
         "# Set a filename to lock that palette to that button slot.",

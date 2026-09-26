@@ -9,7 +9,7 @@ import os, sys, subprocess
 
 # Single source of truth for the app version (shown in the GUI, used for
 # release tags). Bump this when cutting a new version.
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 
 def app_dir():
@@ -117,7 +117,9 @@ GAME_OVERRIDE = os.path.join(STATE, "game_path.txt")
 def _read_override():
     try:
         if os.path.exists(GAME_OVERRIDE):
-            return open(GAME_OVERRIDE, encoding="utf-8").read().strip() or None
+            # utf-8-sig strips a leading BOM (Notepad/PowerShell) that would
+            # otherwise corrupt the path and fail the isdir check.
+            return open(GAME_OVERRIDE, encoding="utf-8-sig").read().strip() or None
     except Exception:
         pass
     return None

@@ -150,10 +150,64 @@ def mark_protected_notified():
         pass
 
 
+def stage_fit_map():
+    """{slot_id: {port_key, ...}} - which pipeline ports fit which animated slot,
+    computed exactly as the engine does at randomize (natural repack, folding
+    down to the slot's record limit when needed, then the two-axis fit check).
+    Uses the engine's on-disk repack cache, so it is fast when warm and only pays
+    the numpy repack on a cold cache. Empty dict if the merge tooling is missing."""
+    try:
+        engine = _engine()
+        from mvc2_data import stagemerge
+        import stagegal
+    except Exception:
+        return {}
+    cache = os.path.join(config.STAGES, "repack_cache")
+    bins = config.STAGES + "/bins"
+    # every pipeline port with its natural repack
+    ports = []
+    for _t, vs in stagegal.sections():
+        for v in vs:
+            pol, tex = v.get("pol_path"), v.get("tex_path")
+            if not (pol and tex):
+                continue
+            try:
+                if not engine.is_pipeline_port(pol):
+                    continue
+                rp = engine.repacked_port(pol, tex, cache)
+            except Exception:
+                continue
+            if rp:
+                ports.append((v["key"], pol, tex, rp))
+    fit = {}
+    for sid in stagegal.SLOTS:
+        if sid == stagegal.TRAINING:
+            continue
+        try:
+            spol = open(os.path.join(bins, f"d_{sid}_pol.BIN"), "rb").read()
+            stex = open(os.path.join(bins, f"d_{sid}_tex.BIN"), "rb").read()
+        except OSError:
+            continue
+        sr, _sb = stagemerge.slot_caps(spol, stex)
+        keys = set()
+        for key, pol, tex, rp in ports:
+            rpol, rtex = rp
+            if len(stagemerge.records(rpol)) > sr:
+                folded = engine.repacked_port(pol, tex, cache, max_tex=sr)
+                if not folded:
+                    continue
+                rpol, rtex = folded
+            if stagemerge.fits(rpol, rtex, spol, stex):
+                keys.add(key)
+        fit[sid] = keys
+    return fit
+
+
 def get_config():
     """The user's randomizer_config.json as a dict ({} if absent/broken)."""
     try:
-        with open(config.CONFIG_JSON, encoding="utf-8") as f:
+        # utf-8-sig tolerates a BOM (Notepad/PowerShell) that plain json would reject
+        with open(config.CONFIG_JSON, encoding="utf-8-sig") as f:
             return json.load(f)
     except Exception:
         return {}

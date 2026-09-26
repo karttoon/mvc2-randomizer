@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for the MvC2 Palette Randomizer GUI.
+"""PyInstaller spec for the MvC2 Randomizer GUI.
 
 Build:  py -m PyInstaller packaging/MvC2Randomizer.spec --noconfirm
 Output: dist/MvC2Randomizer.exe   (onefile, windowed)
@@ -21,6 +21,10 @@ HIDDEN = [
     "PIL.ImageTk",
     "mvc2_randomizer",
     "mvc2_data", "mvc2_data.characters", "mvc2_data.steam", "mvc2_data.stages",
+    # Cross-slot stage merge (numpy repack + stdlib merge)
+    "mvc2_data.stagemerge", "mvc2_data.stagemerge.tex",
+    "mvc2_data.stagemerge.repack_tex", "mvc2_data.stagemerge.merge_slot",
+    "numpy",
 ]
 
 a = Analysis(
@@ -36,8 +40,9 @@ a = Analysis(
            (os.path.join(ROOT, "randgui", "core_colors.json"), ".")],
     hiddenimports=HIDDEN,
     hookspath=[],
-    runtime_hooks=[],
-    excludes=["numpy", "pytest", "setuptools"],   # keep PIL - the engine needs it
+    # Guard sys.stdout/stderr (None in a windowed build) before numpy inits.
+    runtime_hooks=[os.path.join(ROOT, "packaging", "rth_stdio.py")],
+    excludes=["pytest", "setuptools"],   # keep PIL + numpy - the engine needs them
     noarchive=False,
 )
 pyz = PYZ(a.pure)

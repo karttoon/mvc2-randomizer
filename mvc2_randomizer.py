@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MvC2 Steam Palette Randomizer
+MvC2 Steam Randomizer
 
 Randomizes character palettes in the Steam version of Marvel vs. Capcom 2
 using skin PNGs from a curated collection. Each game launch gets a fresh
@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import struct
 import sys
 import zipfile
 import zlib
@@ -93,6 +94,7 @@ DEFAULT_CONFIG_CONTENT = {
     "seed": None,
     "randomize_stages": False,
     "include_unreviewed": True,
+    "distribute_ports": False,
 }
 
 CONFIG_DESCRIPTIONS = {
@@ -101,6 +103,7 @@ CONFIG_DESCRIPTIONS = {
     "seed": "Fixed random seed for reproducible results (null = random each run)",
     "randomize_stages": "Also randomize stages each run (needs stage data downloaded)",
     "include_unreviewed": "Randomize using kept AND unreviewed items (false = only kept)",
+    "distribute_ports": "Merge ported/custom stages into any slot, not just Training",
 }
 
 DEFAULT_LOCKS = os.path.join(STATE_DIR, "palette_locks.txt")
@@ -130,7 +133,9 @@ def load_config(config_path):
             print(f"Created default config: {config_path}")
             print("  Edit this file to customize settings.\n")
         return {}
-    with open(config_path, "r") as f:
+    # utf-8-sig tolerates a UTF-8 BOM (Notepad and PowerShell redirection add one),
+    # which plain json.loads would reject as "Expecting value" at char 0.
+    with open(config_path, "r", encoding="utf-8-sig") as f:
         raw = f.read()
     try:
         data = json.loads(raw)
@@ -154,7 +159,7 @@ def load_config(config_path):
 def generate_skin_locks(locks_path):
     """Create skin_locks.txt with every character and button set to null."""
     lines = [
-        "# MvC2 Palette Randomizer - Skin Locks",
+        "# MvC2 Randomizer - Skin Locks",
         "#",
         "# Each line is: Character_Name BUTTON=filename.png",
         "# Set a filename to lock that skin to that button slot.",
@@ -614,13 +619,15 @@ def build_stage_pools(manifest, stages_dir):
                                    "kind": "edit", "tex": mtex,
                                    "pol": path_of(f"m_{sid}_pol.BIN")})
         else:
-            # slot-agnostic custom stage (e.g. CV/NeoCity) -> training pool
+            # slot-agnostic custom stage (e.g. CV/NeoCity) -> training pool;
+            # 'port' marks it as mergeable into any animated slot too.
             mtex = path_of(e.get("tex"))
             if mtex:
                 training.append({"key": f"m_{sid}", "name": name,
                                  "author": e.get("author", "?"),
                                  "kind": "original", "tex": mtex,
-                                 "pol": path_of(f"m_{sid}_pol.BIN")})
+                                 "pol": path_of(f"m_{sid}_pol.BIN"),
+                                 "game": e.get("game"), "port": True})
 
     for c in manifest.get("community", []):
         sid = c.get("stageId", "")
@@ -631,10 +638,12 @@ def build_stage_pools(manifest, stages_dir):
                    "name": c.get("name") or c.get("title") or c.get("sub", "?"),
                    "author": c.get("author", "?"),
                    "kind": c.get("kind", "retexture"),
+                   "game": c.get("game"),
                    "tex": tex, "pol": path_of(c.get("pol"))}
         if sid in pools:
             pools[sid].append(variant)
         else:
+            variant["port"] = True       # XX stage: mergeable into any slot
             training.append(variant)
 
     # Drop-in custom stages. Two recognized name forms:
@@ -673,8 +682,32 @@ def build_stage_pools(manifest, stages_dir):
                     print(f"  Warning: custom stage XX_{name} skipped - "
                           f"a full custom stage needs both pol and tex")
                     continue
+                variant["port"] = True
                 training.append(variant)
             elif slot in pools:
+                pol = files.get("pol")
+                if pol and is_pipeline_port(pol):
+                    # raw single-model port + our marker -> repack+merge into
+                    # this slot, pinned there (like an XX port, but one slot)
+                    variant["port"] = True
+                    pools[slot].append(variant)
+                    continue
+                if pol and (pol_model_count(pol) or 0) > 1:
+                    # already a slot-shaped file (a merged/slot-ready drop-in or a
+                    # full stage): inject POL+TEX byte-for-byte - no repack, no
+                    # merge, no size check, since the POL carries the slot's own
+                    # geometry. Re-merging it would grab the wrong model.
+                    pools[slot].append(variant)
+                    continue
+                if pol:
+                    # a slim single-model POL without our marker only works in
+                    # Training; in an animated slot it crashes on load
+                    print(f"  Warning: custom stage {slot}_{name} skipped - a "
+                          f"slim single-model POL only works in Training (assign "
+                          f"it there as a full custom stage)")
+                    continue
+                # TEX-only retexture: it reuses the stock POL, so the TEX must
+                # match the slot's stock TEX size or it corrupts the stage.
                 d_tex = os.path.join(bins, f"d_{slot}_tex.BIN")
                 if (os.path.isfile(d_tex)
                         and os.path.getsize(files["tex"])
@@ -698,8 +731,114 @@ def _file_md5(path):
     return h.hexdigest()
 
 
-def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False):
-    """Roll every slot's pool and rebuild the ROM. Returns (rom, log_lines)."""
+PORT_MESH_MARK = bytes.fromhex("fec0a148")   # 0x48A1C0FE - our stage builder's mesh marker
+
+
+def pol_model_count(pol_path):
+    """Model count from a POL header (u32 at offset 4), or None if unreadable."""
+    try:
+        with open(pol_path, "rb") as f:
+            head = f.read(8)
+        return struct.unpack("<I", head[4:8])[0]
+    except (OSError, struct.error):
+        return None
+
+
+def is_pipeline_port(pol_path):
+    """True if a POL is a RAW port from our stage builder - the only thing
+    repack+merge should touch. Such a port has our mesh marker AND exactly ONE
+    model. A file with the marker but MORE than one model is already a merged,
+    slot-ready file (the slot's full model count); repacking it would feed a
+    finished stage back in as raw art and grab the wrong model - so it stays out
+    of the merge path and is injected byte-for-byte instead."""
+    try:
+        data = open(pol_path, "rb").read()
+    except OSError:
+        return False
+    if PORT_MESH_MARK not in data:
+        return False
+    try:
+        return struct.unpack("<I", data[4:8])[0] == 1
+    except struct.error:
+        return False
+
+
+def repacked_port(pol_path, tex_path, cache_dir, max_tex=None):
+    """Return a port's repacked (pol, tex) bytes, caching on disk by content
+    hash (repack is the deterministic, numpy-heavy step). max_tex folds the
+    atlases down to a slot's record limit (a distinct cached result per limit).
+    Failures and empty results are cached negatively (a .bad marker) so a bad
+    port is tried once, not once per slot. None on any failure."""
+    try:
+        raw_pol = open(pol_path, "rb").read()
+        raw_tex = open(tex_path, "rb").read()
+    except OSError:
+        return None
+    h = hashlib.md5(raw_pol + raw_tex).hexdigest()[:16]
+    suffix = f".t{max_tex}" if max_tex else ""       # per record-limit cache
+    cp = os.path.join(cache_dir, h + suffix + ".pol")
+    ct = os.path.join(cache_dir, h + suffix + ".tex")
+    bad = os.path.join(cache_dir, h + suffix + ".bad")
+    if os.path.isfile(bad):
+        return None
+    if os.path.isfile(cp) and os.path.isfile(ct):
+        try:
+            return open(cp, "rb").read(), open(ct, "rb").read()
+        except OSError:
+            pass
+    try:
+        from mvc2_data import stagemerge
+        rp, rt = stagemerge.repack(raw_pol, raw_tex, max_tex=max_tex)
+        if len(stagemerge.records(rp)) == 0 or not rt:
+            raise ValueError("repack produced no atlases (not a build we can merge)")
+    except Exception as e:
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            open(bad, "w").write(str(e))
+        except OSError:
+            pass
+        return None
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        open(cp, "wb").write(rp)
+        open(ct, "wb").write(rt)
+    except OSError:
+        pass
+    return rp, rt
+
+
+def _resolve_stage_payload(pick, slot, stock_pol, default_pol):
+    """(pol_bytes, tex_bytes) to write for a chosen variant. A cross-slot port
+    (has '_repacked') is merged into the stock slot; anything else is its own
+    files (POL defaults to the slot's stock POL for a TEX-only retexture)."""
+    if "_repacked" in pick:
+        from mvc2_data import stagemerge
+        rp, rt = pick["_repacked"]
+        # stock_tex isn't needed by merge for sizing beyond len; pass the same
+        # default TEX the slot ships with.
+        with open(os.path.join(os.path.dirname(default_pol),
+                               f"d_{slot}_tex.BIN"), "rb") as fh:
+            stock_tex = fh.read()
+        # STG08 (Abyss) needs the port at model index 60, not 0 - see stagemerge.
+        return stagemerge.merge(stock_pol, stock_tex, slot, rp, rt,
+                                draw_index=stagemerge.draw_index_for(slot))
+    tex_data = open(pick["tex"], "rb").read()
+    pol_data = open(pick["pol"] or default_pol, "rb").read()
+    if pick.get("port"):
+        # a raw training port (used as-is, not merged): normalise its translucent
+        # strip order too, so it renders right on Steam like the merged ports
+        from mvc2_data import stagemerge
+        pol_data = stagemerge.sort_translucent_strips(pol_data)
+    return pol_data, tex_data
+
+
+def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
+                     distribute_ports=False):
+    """Roll every slot's pool and rebuild the ROM. Returns (rom, log_lines).
+
+    With distribute_ports, ported/custom stages (the training library) are also
+    merged into the animated slots on the fly, so any port can appear anywhere.
+    """
     manifest = load_stage_manifest(stages_dir)
     if not manifest:
         print("Stages: no stage data downloaded yet - run Download/Update first.")
@@ -728,21 +867,77 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False):
     protected_kept, newly_protected = [], []
     slot_names = {e["id"]: e.get("n", e["id"]) for e in manifest.get("stages", [])}
 
+    # Ported/custom stages (the training library), mergeable into any slot.
+    ports = [v for v in pools.get(stagelib.TRAINING_SLOT, []) if v.get("port")]
+    repack_cache = os.path.join(stages_dir, "repack_cache")
+    eligible_ports = []          # [(port_variant, natural (repacked_pol, repacked_tex))]
+    if distribute_ports:
+        try:
+            from mvc2_data import stagemerge      # stdlib import; numpy stays lazy
+        except Exception as e:
+            print(f"  Warning: cross-slot stage merge unavailable ({e})")
+            distribute_ports = False
+    if distribute_ports:
+        # Repack every mergeable port at its NATURAL atlas count once (cached on
+        # disk). Most slots allow 7-16 records and ports pack into 2-4, so this
+        # is all a slot needs; tight slots (STG03/0C, 4 records) fold down below.
+        builds = [p for p in ports if p.get("pol") and is_pipeline_port(p["pol"])]
+        for p in builds:
+            rp = repacked_port(p["pol"], p["tex"], repack_cache)
+            if rp:
+                eligible_ports.append((p, rp))
+        if not quiet:
+            print(f"Cross-slot ports: {len(eligible_ports)} of {len(ports)} "
+                  f"stages mergeable into animated slots")
+
     for slot in stagelib.STAGE_SLOTS:
         default_pol = os.path.join(bins, f"d_{slot}_pol.BIN")
         default_tex = os.path.join(bins, f"d_{slot}_tex.BIN")
         if not (os.path.isfile(default_pol) and os.path.isfile(default_tex)):
             continue                    # can't guarantee geometry - skip slot
+        stock_pol = open(default_pol, "rb").read()
+        stock_tex = open(default_tex, "rb").read()
         # Safety: a variant without its own POL must match the slot's TEX
         # size, or it's mislabeled data that would corrupt the stage.
-        want = os.path.getsize(default_tex)
+        want = len(stock_tex)
         safe = []
         for v in pools.get(slot, []):
+            if v.get("port"):
+                continue                # ports handled below (training uses raw)
             if v["pol"] is None and os.path.getsize(v["tex"]) != want:
                 print(f"  Warning: {v['key']} TEX size doesn't fit slot "
                       f"{slot} - skipped (mislabeled?)")
                 continue
             safe.append(v)
+        if slot == stagelib.TRAINING_SLOT:
+            # Training accepts a full custom stage as-is (no merge needed).
+            safe += ports
+        elif distribute_ports:
+            # Animated slot: add each port that fits. Fit is a two-axis rule -
+            # a port fits if it repacks into <= the slot's records AND <= its TEX
+            # bytes. A port whose natural packing needs more atlases than the
+            # slot has is folded down to the slot's record limit (more padding,
+            # bigger TEX - hence the byte check). Merge happens at pick time.
+            # Candidates = every gallery port (any-slot) + this slot's own pinned
+            # drop-ins (STGxx_* pipeline ports the user placed for this slot).
+            sr, sb = stagemerge.slot_caps(stock_pol, stock_tex)
+            pinned = [(p, None) for p in pools.get(slot, []) if p.get("port")]
+            for p, rp in eligible_ports + pinned:
+                if rp is None:
+                    rp = repacked_port(p["pol"], p["tex"], repack_cache)  # natural
+                    if not rp:
+                        continue
+                rpol, rtex = rp
+                if len(stagemerge.records(rpol)) > sr:
+                    folded = repacked_port(p["pol"], p["tex"], repack_cache,
+                                           max_tex=sr)
+                    if not folded:
+                        continue            # can't fold to this slot's records
+                    rpol, rtex = folded
+                if stagemerge.fits(rpol, rtex, stock_pol, stock_tex):
+                    pv = dict(p)
+                    pv["_repacked"] = (rpol, rtex)
+                    safe.append(pv)
         # kept + unreviewed roll by default; only-selected drops the unreviewed.
         # An empty pool falls through to "leave the slot as it is".
         if only_selected:
@@ -762,30 +957,60 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False):
         pol_i, tex_i = stagelib.slot_entries(slot)
         sname = slot_names.get(slot, slot)
 
-        if slot in state["protected"]:
-            protected_kept.append(slot)
-            log.append(f"  {slot} {sname}: (protected - existing mod kept)")
-            continue
-        cur_pol = stagelib.entry_hash(rom, pol_i, entries)
-        cur_tex = stagelib.entry_hash(rom, tex_i, entries)
-        ok = known | set(state["written"].get(slot, {}).values())
-        v_h = vanilla.get(slot, {})
-        ok |= {v_h.get("pol"), v_h.get("tex")}
-        if cur_pol not in ok or cur_tex not in ok:
-            state["protected"].append(slot)
-            newly_protected.append(slot)
-            log.append(f"  {slot} {sname}: (unknown mod detected - now protected)")
-            continue
+        # A lock is an explicit "put this stage here" - it overrides protection
+        # (both the sticky list and unknown-mod detection), so a slot the user
+        # pinned always gets its locked stage, even over a mod the randomizer
+        # didn't make. An unlocked slot keeps the normal protection behaviour.
+        if locked:
+            if slot in state["protected"]:
+                state["protected"].remove(slot)   # lock supersedes stale protection
+        else:
+            if slot in state["protected"]:
+                protected_kept.append(slot)
+                log.append(f"  {slot} {sname}: (protected - existing mod kept)")
+                continue
+            cur_pol = stagelib.entry_hash(rom, pol_i, entries)
+            cur_tex = stagelib.entry_hash(rom, tex_i, entries)
+            ok = known | set(state["written"].get(slot, {}).values())
+            v_h = vanilla.get(slot, {})
+            ok |= {v_h.get("pol"), v_h.get("tex")}
+            if cur_pol not in ok or cur_tex not in ok:
+                state["protected"].append(slot)
+                newly_protected.append(slot)
+                log.append(f"  {slot} {sname}: (unknown mod detected - now protected)")
+                continue
 
-        pick = locked or random.choice(pool)
-        tag = (f"{pick['name']} ({pick['author']}) [{pick['kind']}]"
-               + (" [locked]" if locked else ""))
+        # Pick, resolving the payload. A merged port can fail on an awkward
+        # pairing; if so, drop it and re-roll from the rest of the pool (note:
+        # never silently fall back to stock) - log the error either way.
+        candidates = [locked] if locked else list(pool)
+        chosen = None
+        while candidates:
+            pick = locked or random.choice(candidates)
+            try:
+                pol_data, tex_data = _resolve_stage_payload(
+                    pick, slot, stock_pol, default_pol)
+                chosen = pick
+                break
+            except Exception as e:
+                print(f"  Warning: {pick['name']} could not be placed in slot "
+                      f"{slot} ({e}) - rolling another")
+                log.append(f"  {slot} {sname}: {pick['name']} FAILED ({e})")
+                candidates = [c for c in candidates if c is not pick]
+                if locked:              # a locked pick that fails: give up the lock
+                    locked = None
+                    candidates = list(pool)
+        if chosen is None:
+            log.append(f"  {slot} {sname}: (no usable stage - left as is)")
+            continue
+        merged = "_repacked" in chosen
+        tag = (f"{chosen['name']} ({chosen['author']}) [{chosen['kind']}]"
+               + (" [merged]" if merged else "")
+               + (" [locked]" if lock_key and chosen.get('key') == lock_key else ""))
         log.append(f"  {slot} {sname}: {tag}")
         if not quiet:
             print(f"Stage {slot} {sname}: {tag}")
         if not dry_run:
-            tex_data = open(pick["tex"], "rb").read()
-            pol_data = open(pick["pol"] or default_pol, "rb").read()
             replacements[tex_i] = tex_data
             replacements[pol_i] = pol_data
             state["written"][slot] = {
@@ -972,7 +1197,10 @@ def do_gallery_download(skins_dir):
     # Extract every palette in the archive. Rejected palettes are kept on disk
     # too (rejection is a view/pool choice, not a delete) so they can always be
     # reconsidered later - the whole archive is downloaded regardless, so there
-    # is no bandwidth saving in skipping them.
+    # is no bandwidth saving in skipping them. The managed skins/ tree mirrors
+    # the repo (palettes removed upstream are pruned below); user drop-ins live
+    # in custom/skins and are never touched.
+    zip_skins = set()   # rel paths under skins/ present in the archive
     with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
         for info in zf.infolist():
             if info.is_dir():
@@ -983,6 +1211,7 @@ def do_gallery_download(skins_dir):
             rel_path = info.filename[len(SKINS_ZIP_PREFIX):]
             if not rel_path:
                 continue
+            zip_skins.add(rel_path.replace("\\", "/").lower())
             dest = os.path.join(skins_dir, rel_path)
             if os.path.isfile(dest):
                 existed += 1
@@ -992,7 +1221,24 @@ def do_gallery_download(skins_dir):
                 dst.write(src.read())
             added += 1
 
-    print(f"Added {added} new skins ({existed} already existed)")
+    # Prune managed palettes that no longer exist upstream (skip if the archive
+    # somehow had none, to avoid wiping everything on a bad download).
+    removed = 0
+    if zip_skins and os.path.isdir(skins_dir):
+        for root, _dirs, files in os.walk(skins_dir):
+            for fn in files:
+                if not fn.lower().endswith(".png"):
+                    continue
+                full = os.path.join(root, fn)
+                rel = os.path.relpath(full, skins_dir).replace("\\", "/").lower()
+                if rel not in zip_skins:
+                    try:
+                        os.remove(full)
+                        removed += 1
+                    except OSError:
+                        pass
+    print(f"Added {added} new skins ({existed} already existed"
+          + (f", {removed} removed upstream" if removed else "") + ")")
 
     # Stage payloads + gallery media (added in 1.0.2). stages_dir layout:
     #   stages.json          manifest (always refreshed)
@@ -1000,6 +1246,8 @@ def do_gallery_download(skins_dir):
     #   previews/*.jpg       thumbnails + center/left/right stills
     stages_dir = DEFAULT_STAGES
     s_added = s_existed = 0
+    zip_bins = set()       # basenames under stage-textures/ (.BIN)
+    zip_previews = set()   # basenames under stages/ (.jpg)
     with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
         for info in zf.infolist():
             if info.is_dir():
@@ -1008,6 +1256,7 @@ def do_gallery_download(skins_dir):
             if info.filename.startswith(STAGE_BINS_ZIP_PREFIX):
                 if not name.upper().endswith(".BIN"):
                     continue
+                zip_bins.add(name.lower())
                 dest = os.path.join(stages_dir, "bins", name)
                 # c_* payloads are content-hash-named (immutable); m_*/d_*
                 # names are stable but their content can be updated upstream.
@@ -1017,6 +1266,7 @@ def do_gallery_download(skins_dir):
                     dest = os.path.join(stages_dir, "stages.json")
                     refresh = True
                 elif name.lower().endswith(".jpg"):
+                    zip_previews.add(name.lower())
                     dest = os.path.join(stages_dir, "previews", name)
                     refresh = name.startswith(("m_", "d_"))
                 else:
@@ -1044,9 +1294,32 @@ def do_gallery_download(skins_dir):
             with zf.open(info) as src, open(dest, "wb") as dst:
                 dst.write(src.read())
             s_added += 1
-    if s_added or s_existed:
+
+    # Mirror the managed stage folders: prune bins/previews that are gone
+    # upstream. A stage whose content changed re-appears under a new c_<hash>
+    # name, so its old file is pruned here too. Guarded against empty sets.
+    s_removed = 0
+
+    def _prune(subdir, keep, exts):
+        n = 0
+        d = os.path.join(stages_dir, subdir)
+        if not keep or not os.path.isdir(d):
+            return 0
+        for fn in os.listdir(d):
+            if fn.lower().endswith(exts) and fn.lower() not in keep:
+                try:
+                    os.remove(os.path.join(d, fn))
+                    n += 1
+                except OSError:
+                    pass
+        return n
+
+    s_removed += _prune("bins", zip_bins, (".bin",))
+    s_removed += _prune("previews", zip_previews, (".jpg",))
+    if s_added or s_existed or s_removed:
         print(f"Stages: {s_added} files added/refreshed "
-              f"({s_existed} already present)")
+              f"({s_existed} already present"
+              + (f", {s_removed} removed upstream" if s_removed else "") + ")")
     return True
 
 
@@ -1176,7 +1449,7 @@ def main():
         print(f"Using seed: {seed}")
 
     print("=" * 60)
-    print("MvC2 Palette Randomizer")
+    print("MvC2 Randomizer")
     print("=" * 60)
     print(f"Game:  {arc_path}")
     print(f"Skins: {skins_dir}")
@@ -1398,7 +1671,8 @@ def main():
     if (args.stages or config.get("randomize_stages")) and rom is not None:
         rom, stage_log = randomize_stages(rom, DEFAULT_STAGES,
                                           args.quiet, args.dry_run,
-                                          only_selected)
+                                          only_selected,
+                                          config.get("distribute_ports", False))
         run_log.extend(stage_log)
     elif args.stages and rom is None:
         print("[dry-run] Stage roll skipped (needs the ROM); run without --dry-run.")

@@ -1,4 +1,4 @@
-# MvC2 Steam Palette Randomizer
+# MvC2 Steam Randomizer
 
 Randomizes character palettes in the Steam version of **Marvel vs. Capcom 2** (from the Fighting Collection). Each game launch gets a fresh set of random color schemes across all 56 characters and 6 button slots.
 
