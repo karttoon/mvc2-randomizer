@@ -379,6 +379,83 @@ def assign_custom(item, target):
     return base
 
 
+# ---- playlists ------------------------------------------------------------
+# Named sets of stages that randomize together ("Retextures", "2D stages", one
+# ported game...). Stored as {"playlists": {name: [variant_key, ...]},
+# "editing": name}. Which playlist Randomize uses is the config key
+# "stage_playlist" (null = all kept stages).
+
+def load_playlists():
+    try:
+        with open(config.STAGE_PLAYLISTS_JSON, encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+    pl = d.get("playlists") if isinstance(d, dict) else None
+    d = {"playlists": pl if isinstance(pl, dict) else {},
+         "editing": d.get("editing") if isinstance(d, dict) else None}
+    if d["editing"] not in d["playlists"]:
+        d["editing"] = next(iter(d["playlists"]), None)
+    return d
+
+
+def save_playlists(d):
+    with open(config.STAGE_PLAYLISTS_JSON, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=1, sort_keys=True)
+
+
+def playlist_keys(name):
+    """The stage keys in a playlist (empty list if it doesn't exist)."""
+    return list(load_playlists()["playlists"].get(name) or [])
+
+
+def playlist_create(name):
+    d = load_playlists()
+    d["playlists"].setdefault(name, [])
+    d["editing"] = name
+    save_playlists(d)
+
+
+def playlist_rename(old, new):
+    d = load_playlists()
+    if old in d["playlists"] and new and new not in d["playlists"]:
+        d["playlists"][new] = d["playlists"].pop(old)
+        if d["editing"] == old:
+            d["editing"] = new
+        save_playlists(d)
+        return True
+    return False
+
+
+def playlist_delete(name):
+    d = load_playlists()
+    d["playlists"].pop(name, None)
+    if d["editing"] == name:
+        d["editing"] = next(iter(d["playlists"]), None)
+    save_playlists(d)
+
+
+def playlist_set_editing(name):
+    d = load_playlists()
+    if name in d["playlists"]:
+        d["editing"] = name
+        save_playlists(d)
+
+
+def playlist_toggle(name, key):
+    """Add/remove one stage. Returns True if it's now in the playlist."""
+    d = load_playlists()
+    keys = d["playlists"].setdefault(name, [])
+    if key in keys:
+        keys.remove(key)
+        now = False
+    else:
+        keys.append(key)
+        now = True
+    save_playlists(d)
+    return now
+
+
 def load_locks():
     """{slot_id: variant_key} for slots pinned to one stage."""
     try:
@@ -411,15 +488,6 @@ def new_keys(secs=None):
     secs = secs if secs is not None else sections()
     v = load_verdicts()
     return {x["key"] for _t, vs in secs for x in vs if x["key"] not in v}
-
-
-def mark_all_seen():
-    """Acknowledge all currently-new variants by keeping them (they already
-    roll by default; this just clears the 'new' flag)."""
-    v = load_verdicts()
-    for key in all_keys():
-        v.setdefault(key, KEEP)
-    save_verdicts(v)
 
 
 def counts():

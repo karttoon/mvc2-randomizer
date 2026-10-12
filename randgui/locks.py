@@ -76,6 +76,11 @@ def clear_char(char):
     set_char_locks(char, {b: None for b in BUTTONS})
 
 
+def clear_all():
+    """Every character, every button back to random."""
+    _write({})
+
+
 def count_locked(char, locks=None):
     return sum(1 for b in BUTTONS if char_locks(char, locks)[b])
 

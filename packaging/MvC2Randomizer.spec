@@ -37,7 +37,14 @@ a = Analysis(
            (os.path.join(ROOT, "mvc2_data", "vanilla_stage_hashes.json"), "mvc2_data"),
            (os.path.join(ROOT, "mvc2_data", "sheet_specs.json"), "mvc2_data"),
            # Hand-curated primary/secondary color indices for gallery sorting
-           (os.path.join(ROOT, "randgui", "core_colors.json"), ".")],
+           (os.path.join(ROOT, "randgui", "core_colors.json"), "."),
+           # FX effect-palette catalogue (verdicts + base_idx) and the effect /
+           # body sprites the FX tab previews with. core_colors is also placed
+           # under randgui/ where fx.py's fallback looks.
+           (os.path.join(ROOT, "mvc2_data", "fx_targets.json"), "mvc2_data"),
+           (os.path.join(ROOT, "mvc2_data", "fx_sprites.bin"), "mvc2_data"),
+           (os.path.join(ROOT, "mvc2_data", "fx_bodysprites.bin"), "mvc2_data"),
+           (os.path.join(ROOT, "randgui", "core_colors.json"), "randgui")],
     hiddenimports=HIDDEN,
     hookspath=[],
     # Guard sys.stdout/stderr (None in a windowed build) before numpy inits.

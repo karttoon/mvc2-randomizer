@@ -9,7 +9,7 @@ import os, sys, subprocess
 
 # Single source of truth for the app version (shown in the GUI, used for
 # release tags). Bump this when cutting a new version.
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 
 def app_dir():
@@ -54,6 +54,10 @@ PALETTE_STATE = os.path.join(STATE, "palette_state.json")
 STAGE_VERDICTS_JSON = os.path.join(STATE, "stage_verdicts.json")
 STAGE_STATE = os.path.join(STATE, "stage_state.json")
 STAGE_LOCKS_JSON = os.path.join(STATE, "stage_locks.json")
+STAGE_PLAYLISTS_JSON = os.path.join(STATE, "stage_playlists.json")
+FX_STATE_JSON = os.path.join(STATE, "fx_state.json")
+FX_LOCKS_JSON = os.path.join(STATE, "fx_locks.json")
+FX_APPLIED_JSON = os.path.join(STATE, "fx_applied.json")
 
 # Canonical state filename -> legacy names to migrate from (older app roots and
 # pre-normalization names). Each is moved into data/ under the canonical name.
@@ -66,6 +70,7 @@ _STATE_MIGRATIONS = {
     "stage_verdicts.json": [],
     "stage_state.json": [],
     "stage_locks.json": [],
+    "stage_playlists.json": [],
     "game_path.txt": [],
 }
 

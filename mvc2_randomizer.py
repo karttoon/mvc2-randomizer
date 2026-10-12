@@ -41,6 +41,7 @@ from mvc2_data.steam import (
     adjust_luminance, TOTAL_PALETTE_COUNT, STEAM_PALETTE_OFFSETS,
     load_vanilla_palettes,
 )
+from mvc2_data.fx import apply_fx, restore_entries, load_fx_targets, FX_MODES
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Loose settings/verdict/log/state files live together under data/ to keep
@@ -54,6 +55,9 @@ DEFAULT_STAGES = os.path.join(SCRIPT_DIR, "stages")
 STAGE_VERDICTS = os.path.join(STATE_DIR, "stage_verdicts.json")
 STAGE_STATE = os.path.join(STATE_DIR, "stage_state.json")
 STAGE_LOCKS = os.path.join(STATE_DIR, "stage_locks.json")
+# Named stage playlists ({"playlists": {name: [key, ...]}}); config key
+# "stage_playlist" picks the one Randomize draws from.
+STAGE_PLAYLISTS = os.path.join(STATE_DIR, "stage_playlists.json")
 # User-owned drop-in content; gallery downloads never touch this tree.
 CUSTOM_DIR = os.path.join(SCRIPT_DIR, "custom")
 # Curated verdict mixes downloaded with the gallery.
@@ -62,6 +66,15 @@ LAST_RUN_LOG = os.path.join(STATE_DIR, "last_run.txt")
 # Tracks what this tool wrote so external edits (e.g. PalMod) can be detected
 # and protected instead of overwritten. See load_palette_state().
 PALETTE_STATE = os.path.join(STATE_DIR, "palette_state.json")
+# Per-sheet FX on/off overrides written by the GUI FX tab ({sheet_id: bool});
+# absent id falls back to the sheet's default_on in fx_targets.json.
+FX_STATE = os.path.join(STATE_DIR, "fx_state.json")
+# Per-palette pinned FX settings ({sheet_id: {mode, base?, seed?}}) from the FX
+# tab's lock control; these win over the global fx_mode.
+FX_LOCKS = os.path.join(STATE_DIR, "fx_locks.json")
+# Record of the ROM entries the last FX run wrote ({uid: [entry,...]}), so the
+# next run can revert them to vanilla before re-applying (or leaving FX off).
+FX_APPLIED = os.path.join(STATE_DIR, "fx_applied.json")
 ARC_FILENAME = "game_50.arc"
 ARC_SUBPATH = os.path.join("arc", "pc", ARC_FILENAME)
 
@@ -95,6 +108,11 @@ DEFAULT_CONFIG_CONTENT = {
     "randomize_stages": False,
     "include_unreviewed": True,
     "distribute_ports": False,
+    "stage_playlist": None,
+    "fx_mode": "Default",
+    "fx_chaos_seed": 0,
+    "fx_gradient": "Normal",
+    "fx_neon_color": "Auto",
 }
 
 CONFIG_DESCRIPTIONS = {
@@ -104,6 +122,11 @@ CONFIG_DESCRIPTIONS = {
     "randomize_stages": "Also randomize stages each run (needs stage data downloaded)",
     "include_unreviewed": "Randomize using kept AND unreviewed items (false = only kept)",
     "distribute_ports": "Merge ported/custom stages into any slot, not just Training",
+    "stage_playlist": "Stage playlist name to randomize from (null = all kept stages)",
+    "fx_mode": "Effect-palette recolor mode: " + "/".join(FX_MODES),
+    "fx_chaos_seed": "Reroll index for Chaos FX mode (bump for a different random set)",
+    "fx_gradient": "FX gradient boost (keeps shading readable): Off/Normal/Strong",
+    "fx_neon_color": "Neon FX tube color: Auto/Pink/Blue/Lime/Yellow/Orange/Purple/Red",
 }
 
 DEFAULT_LOCKS = os.path.join(STATE_DIR, "palette_locks.txt")
@@ -236,8 +259,6 @@ def resolve_character(query):
     candidates = []
     for cid in PLAYABLE_CHARS:
         name = CHARACTERS[cid]
-        sname = safe_name(name)
-        folder = CHAR_ID_TO_FOLDER.get(cid, sname)
         norm = name.lower().replace(" ", "").replace("-", "").replace(".", "")
         candidates.append((cid, name, norm))
 
@@ -832,12 +853,34 @@ def _resolve_stage_payload(pick, slot, stock_pol, default_pol):
     return pol_data, tex_data
 
 
+def load_stage_playlist(name):
+    """Stage keys of the named playlist, or None (= no playlist: all kept
+    stages roll). A missing or empty playlist is ignored with a warning."""
+    if not name:
+        return None
+    try:
+        with open(STAGE_PLAYLISTS, encoding="utf-8-sig") as f:
+            keys = (json.load(f).get("playlists") or {}).get(name)
+    except (OSError, ValueError, AttributeError):
+        keys = None
+    if not keys:
+        print(f"Stages: playlist '{name}' is missing or empty - using all "
+              "kept stages instead.")
+        return None
+    return list(keys)
+
+
 def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
-                     distribute_ports=False):
+                     distribute_ports=False, playlist=None):
     """Roll every slot's pool and rebuild the ROM. Returns (rom, log_lines).
 
     With distribute_ports, ported/custom stages (the training library) are also
     merged into the animated slots on the fly, so any port can appear anywhere.
+
+    With a playlist (list of stage keys), unlocked slots draw ONLY from it:
+    each slot takes a playlist stage that fits and hasn't been used yet; once
+    those run out stages repeat; a slot no playlist stage fits gets its stock
+    (default) stage. Rejected stages are skipped. Locks still win.
     """
     manifest = load_stage_manifest(stages_dir)
     if not manifest:
@@ -852,6 +895,8 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
     state = load_stage_state()
     locks = load_stage_locks()
     pools = build_stage_pools(manifest, stages_dir)
+    pl = set(playlist) if playlist else None
+    pl_used = set()                 # playlist stages already placed this run
 
     # Every payload we could ever have installed counts as "ours".
     bins = os.path.join(stages_dir, "bins")
@@ -890,7 +935,20 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
             print(f"Cross-slot ports: {len(eligible_ports)} of {len(ports)} "
                   f"stages mergeable into animated slots")
 
-    for slot in stagelib.STAGE_SLOTS:
+    slot_order = list(stagelib.STAGE_SLOTS)
+    if pl is not None:
+        # Fill the tightest slots (smallest texture space) first and Training
+        # last - Training takes any port, so it shouldn't use up a stage a
+        # pickier slot needed. More distinct playlist stages, fewer repeats.
+        def _cap(s):
+            try:
+                return os.path.getsize(os.path.join(bins, f"d_{s}_tex.BIN"))
+            except OSError:
+                return 1 << 30
+        slot_order = sorted((s for s in slot_order
+                             if s != stagelib.TRAINING_SLOT), key=_cap)
+        slot_order.append(stagelib.TRAINING_SLOT)
+    for slot in slot_order:
         default_pol = os.path.join(bins, f"d_{slot}_pol.BIN")
         default_tex = os.path.join(bins, f"d_{slot}_tex.BIN")
         if not (os.path.isfile(default_pol) and os.path.isfile(default_tex)):
@@ -944,6 +1002,15 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
             pool = [v for v in safe if verdicts.get(v["key"]) == "keep"]
         else:
             pool = [v for v in safe if verdicts.get(v["key"]) != "delete"]
+        # Playlist: unlocked slots draw only from it (fresh stages first, then
+        # repeats), falling back to the slot's stock stage when none fits.
+        pl_pool, pl_default = [], None
+        if pl is not None:
+            pl_pool = [v for v in safe if v["key"] in pl
+                       and verdicts.get(v["key"]) != "delete"]
+            pl_default = next((v for v in safe if v["key"] == f"d_{slot}"), None)
+            fresh = [v for v in pl_pool if v["key"] not in pl_used]
+            pool = fresh or pl_pool or ([pl_default] if pl_default else [])
         # A lock pins the slot to one variant (wins even over exclusion)
         locked = None
         lock_key = locks.get(slot)
@@ -984,8 +1051,17 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
         # pairing; if so, drop it and re-roll from the rest of the pool (note:
         # never silently fall back to stock) - log the error either way.
         candidates = [locked] if locked else list(pool)
+        # playlist fallbacks if every candidate fails: rest of the playlist,
+        # then the stock stage
+        tiers = ([pl_pool, [pl_default] if pl_default else []]
+                 if pl is not None and not locked else [])
+        tried = set()
         chosen = None
-        while candidates:
+        while True:
+            while not candidates and tiers:
+                candidates = [c for c in tiers.pop(0) if c["key"] not in tried]
+            if not candidates:
+                break
             pick = locked or random.choice(candidates)
             try:
                 pol_data, tex_data = _resolve_stage_payload(
@@ -996,17 +1072,28 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
                 print(f"  Warning: {pick['name']} could not be placed in slot "
                       f"{slot} ({e}) - rolling another")
                 log.append(f"  {slot} {sname}: {pick['name']} FAILED ({e})")
+                tried.add(pick["key"])
                 candidates = [c for c in candidates if c is not pick]
                 if locked:              # a locked pick that fails: give up the lock
                     locked = None
-                    candidates = list(pool)
+                    candidates = [c for c in pool if c["key"] not in tried]
+                    if pl is not None:
+                        tiers = [pl_pool, [pl_default] if pl_default else []]
         if chosen is None:
             log.append(f"  {slot} {sname}: (no usable stage - left as is)")
             continue
         merged = "_repacked" in chosen
+        is_lock = bool(lock_key and chosen.get('key') == lock_key)
+        if pl is not None:
+            pl_used.add(chosen["key"])
         tag = (f"{chosen['name']} ({chosen['author']}) [{chosen['kind']}]"
                + (" [merged]" if merged else "")
-               + (" [locked]" if lock_key and chosen.get('key') == lock_key else ""))
+               + (" [locked]" if is_lock else "")
+               + (" [playlist]" if pl is not None and not is_lock
+                  and chosen["key"] in pl else "")
+               + (" [default - no playlist stage fits]"
+                  if pl is not None and not is_lock and chosen["key"] not in pl
+                  else ""))
         log.append(f"  {slot} {sname}: {tag}")
         if not quiet:
             print(f"Stage {slot} {sname}: {tag}")
@@ -1017,6 +1104,11 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
                 "pol": hashlib.md5(pol_data).hexdigest(),
                 "tex": hashlib.md5(tex_data).hexdigest(),
             }
+
+    if pl is not None:          # slots ran out of order: list them in slot order
+        head, body = log[:2], log[2:]
+        body.sort(key=lambda ln: (ln.strip()[:2], 0))   # stable: per-slot lines keep order
+        log = head + body
 
     if newly_protected:
         print("NOTICE: Unrecognized stage mods detected for slot(s): "
@@ -1131,26 +1223,11 @@ def collect_sheets(skin_folder, folder_name, verdicts_raw, only_selected=False):
     return out
 
 
-def load_rejected_skins():
-    """Load rejected skins from gallery_verdicts.json (verdict == 'delete')."""
-    verdicts_file = os.path.join(STATE_DIR, "palette_verdicts.json")
-    rejected = set()
-    if os.path.isfile(verdicts_file):
-        with open(verdicts_file, "r") as f:
-            verdicts = json.load(f)
-        for key, verdict in verdicts.items():
-            if verdict == "delete":
-                # key is "Character/filename.png" — extract filename
-                filename = key.split("/", 1)[-1] if "/" in key else key
-                rejected.add(filename.lower())
-    return rejected
-
-
 def do_gallery_download(skins_dir):
     """Download the skins gallery from GitHub and merge into existing collection.
 
     Only adds new files — existing skins (including user's own custom palettes)
-    are preserved. Previously rejected skins (in gallery_verdicts.json) are skipped.
+    are preserved.
     Safe to run repeatedly to pick up gallery updates.
     """
     print("=" * 60)
@@ -1354,6 +1431,9 @@ def build_parser():
                         "--character to unlock just one")
     p.add_argument("--stages", action="store_true",
                    help="Also randomize stages (or set randomize_stages in config)")
+    p.add_argument("--fx", metavar="MODE", choices=FX_MODES,
+                   help="Recolor effect palettes: " + " / ".join(FX_MODES)
+                        + " (or set fx_mode in config)")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress the per-character assignment list (still written to last_run.txt)")
     p.add_argument("--gallery-download", action="store_true",
@@ -1667,12 +1747,101 @@ def main():
         print(f"Protected characters kept as-is: {', '.join(protected_kept)}")
         print()
 
+    # Effect-palette recolor (opt-in via --fx or config fx_mode). Runs after
+    # skins so FX wins on any sheet it owns; sources colors from vanilla so the
+    # result is independent of which skin landed this run. Every run first
+    # reverts the entries the PREVIOUS run recolored (fx_applied.json) back to
+    # vanilla, so turning FX down/off never strands last run's colors.
+    fx_mode = args.fx or config.get("fx_mode", "Default")
+    if rom is not None and not args.dry_run:
+        skip_fx = set()
+        for folder in state["protected"]:
+            cid2 = FOLDER_TO_CHAR_ID.get(folder)
+            if cid2 is not None:
+                skip_fx.add(cid2)
+
+        # 1) Revert whatever the last FX run wrote.
+        touched = set()
+        try:
+            with open(FX_APPLIED, encoding="utf-8-sig") as fh:
+                prev = json.load(fh)
+        except (OSError, ValueError):
+            prev = {}
+        if prev:
+            restore_entries(rom, prev, skip_uids=skip_fx, only_uid=char_filter_id)
+            for k in prev:
+                touched.add(int(k))
+
+        # 2) Apply the current mode and any per-palette locks; record what wrote.
+        fx_targets = load_fx_targets()
+        applied = {}
+        changed = 0
+        # Per-palette locks ({sheet_id: {mode, base?, seed?}}) win over the global.
+        try:
+            with open(FX_LOCKS, encoding="utf-8-sig") as fh:
+                fx_locks = json.load(fh)
+                if not isinstance(fx_locks, dict):
+                    fx_locks = {}
+        except (OSError, ValueError):
+            fx_locks = {}
+        if (fx_mode and fx_mode != "Default") or fx_locks:
+            # Per-sheet on/off overrides from the GUI FX tab; absent id -> default_on.
+            fx_enabled = None
+            try:
+                with open(FX_STATE, encoding="utf-8-sig") as fh:
+                    overrides = json.load(fh)
+                if isinstance(overrides, dict) and overrides:
+                    fx_enabled = set()
+                    for d in fx_targets.values():
+                        for s in d["sheets"]:
+                            if overrides.get(s["id"], s["default_on"]):
+                                fx_enabled.add(s["id"])
+            except (OSError, ValueError):
+                fx_enabled = None
+            fx_log = []
+            changed = apply_fx(rom, fx_mode, targets=fx_targets, enabled=fx_enabled,
+                               chaos_seed=int(config.get("fx_chaos_seed", 0) or 0),
+                               only_uid=char_filter_id, skip_uids=skip_fx,
+                               locks=fx_locks,
+                               applied_out=applied, log=fx_log,
+                               base_color=config.get("fx_global_color") or None,
+                               gradient=config.get("fx_gradient") or "Normal",
+                               neon=config.get("fx_neon_color") or "Auto")
+            for k in applied:
+                touched.add(int(k))
+            if changed:
+                print(f"FX: recolored {changed} effect sheet(s)"
+                      f" [{fx_mode}{', +locks' if fx_locks else ''}]")
+                run_log.append("")
+                run_log.append(f"FX effects [{fx_mode}]:")
+                run_log.extend(fx_log)
+                run_log.append("")
+
+        # 3) Persist the new applied-record (for next run's revert).
+        try:
+            with open(FX_APPLIED, "w", encoding="utf-8") as fh:
+                json.dump({str(k): v for k, v in applied.items()}, fh)
+        except OSError:
+            pass
+
+        # 4) Re-baseline the write-hash of every character FX touched (reverted
+        #    or recolored), so our own edits aren't later flagged as external.
+        for cid2 in touched:
+            if cid2 in skip_fx or cid2 not in CHARACTERS:
+                continue
+            folder = CHAR_ID_TO_FOLDER.get(cid2, safe_name(CHARACTERS[cid2]))
+            state["written"][folder] = block_hash(rom, cid2)
+    elif fx_mode and fx_mode != "Default" and args.dry_run:
+        print("[dry-run] FX recolor skipped (needs the ROM); run without --dry-run.")
+
     # Stage randomization (opt-in via --stages or config randomize_stages)
     if (args.stages or config.get("randomize_stages")) and rom is not None:
         rom, stage_log = randomize_stages(rom, DEFAULT_STAGES,
                                           args.quiet, args.dry_run,
                                           only_selected,
-                                          config.get("distribute_ports", False))
+                                          config.get("distribute_ports", False),
+                                          load_stage_playlist(
+                                              config.get("stage_playlist")))
         run_log.extend(stage_log)
     elif args.stages and rom is None:
         print("[dry-run] Stage roll skipped (needs the ROM); run without --dry-run.")
@@ -1682,7 +1851,7 @@ def main():
               f" ({total_locked} slots locked)")
         print("No files were modified.")
     else:
-        print(f"Writing modified archive...")
+        print("Writing modified archive...")
         write_arc(arc_path, rom)
         save_palette_state(state)
         # Save assignment log so user can check what was applied
