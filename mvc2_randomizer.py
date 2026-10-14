@@ -472,6 +472,18 @@ def vanilla_hashes(vanilla):
             for cid, block in vanilla.items()}
 
 
+def legacy_vanilla_hashes():
+    """{cid: sha1} of the palette blocks that versions before 1.0.7 bundled as
+    "vanilla". That data was taken from an already-modded game, so a character
+    reset by an older version holds those blocks - they're the randomizer's own
+    output, not someone else's edit, and must not trigger protection."""
+    try:
+        with open(LEGACY_VANILLA_HASHES_FILE, encoding="utf-8") as f:
+            return {int(k): v for k, v in json.load(f).items()}
+    except (OSError, ValueError):
+        return {}
+
+
 def reset_palettes(arc_path, char_id=None):
     """Reset character palettes to their stock (vanilla) values - one
     character if char_id is given, otherwise all of them.
@@ -558,6 +570,9 @@ def unprotect_palettes(arc_path, char_id=None):
 
 from mvc2_data import stages as stagelib
 
+LEGACY_VANILLA_HASHES_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "mvc2_data",
+    "legacy_vanilla_hashes.json")
 VANILLA_STAGE_HASHES_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "mvc2_data", "vanilla_stage_hashes.json")
@@ -1574,6 +1589,7 @@ def main():
     # else - leave it completely alone and tell the user.
     state = load_palette_state()
     van_hash = vanilla_hashes(vanilla) if vanilla else {}
+    legacy_hash = legacy_vanilla_hashes()
     protected_kept = []     # previously-protected characters skipped this run
     newly_protected = []    # external edits detected on this run
 
@@ -1596,6 +1612,14 @@ def main():
         if char_filter_id is not None and cid != char_filter_id:
             continue
 
+        # A character at true stock was never "edited elsewhere" - lift a
+        # protection that older versions set because their bundled vanilla
+        # data wasn't actually stock.
+        if (folder_name in state["protected"] and rom is not None
+                and cid in van_hash and block_hash(rom, cid) == van_hash[cid]):
+            state["protected"].remove(folder_name)
+            if folder_name in state["notified"]:
+                state["notified"].remove(folder_name)
         # Skip characters with protected (externally edited) palettes
         if folder_name in state["protected"]:
             protected_kept.append(folder_name)
@@ -1605,7 +1629,8 @@ def main():
             continue
         if rom is not None and cid in van_hash:
             cur = block_hash(rom, cid)
-            if cur != van_hash[cid] and cur != state["written"].get(folder_name):
+            if (cur != van_hash[cid] and cur != legacy_hash.get(cid)
+                    and cur != state["written"].get(folder_name)):
                 state["protected"].append(folder_name)
                 newly_protected.append(folder_name)
                 run_log.append(char_name)

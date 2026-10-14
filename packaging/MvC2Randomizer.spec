@@ -35,6 +35,8 @@ a = Analysis(
     # (replaces keeping a full game_50.arc backup).
     datas=[(os.path.join(ROOT, "mvc2_data", "vanilla_palettes.bin"), "mvc2_data"),
            (os.path.join(ROOT, "mvc2_data", "vanilla_stage_hashes.json"), "mvc2_data"),
+           # pre-1.0.7 "vanilla" blocks, so they aren't mistaken for outside edits
+           (os.path.join(ROOT, "mvc2_data", "legacy_vanilla_hashes.json"), "mvc2_data"),
            (os.path.join(ROOT, "mvc2_data", "sheet_specs.json"), "mvc2_data"),
            # Hand-curated primary/secondary color indices for gallery sorting
            (os.path.join(ROOT, "randgui", "core_colors.json"), "."),
