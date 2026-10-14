@@ -182,6 +182,23 @@ class App:
         ttk.Label(t, text="Randomization scope", font=("Segoe UI", 11, "bold")
                   ).pack(anchor="w")
         ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Choose what each Randomize (and each launch) changes. "
+                       "Anything unchecked is left exactly as it is in your game "
+                       "- e.g. reset palettes to vanilla, then uncheck Palettes "
+                       "and FX to shuffle only the stages."
+                  ).pack(anchor="w", pady=(2, 4))
+        scope = ttk.Frame(t); scope.pack(anchor="w", pady=(0, 8))
+        cfg0 = randomize.get_config()
+        self.scope_vars = {}
+        for key, label in (("randomize_palettes", "Palettes"),
+                           ("randomize_stages", "Stages"),
+                           ("randomize_fx", "FX (effect colors)")):
+            var = tk.BooleanVar(value=bool(cfg0.get(key, True)))
+            self.scope_vars[key] = var
+            ttk.Checkbutton(scope, text=label, variable=var,
+                            command=lambda k=key: self._on_scope_toggle(k)
+                            ).pack(side="left", padx=(0, 16))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
                   text="By default the randomizer uses both the items you've "
                        "kept and any you haven't reviewed yet. Uncheck this to "
                        "randomize using ONLY your kept selections (palettes and "
@@ -3959,13 +3976,10 @@ class App:
         ttk.Label(row, text="Fixed seed (optional):").pack(side="left")
         ttk.Entry(row, textvariable=self.seed_var, width=14).pack(side="left", padx=(6, 0))
 
-        srow = ttk.Frame(t); srow.pack(anchor="w", pady=(0, 8))
-        self.stages_var = tk.BooleanVar(
-            value=bool(randomize.get_config().get("randomize_stages")))
-        ttk.Checkbutton(srow, text="Also randomize stages (pick them on the "
-                                   "Stage Gallery tab)",
-                        variable=self.stages_var,
-                        command=self._on_stages_toggle).pack(side="left")
+        self.scope_lbl = ttk.Label(t, text="", foreground="#555")
+        self.scope_lbl.pack(anchor="w", pady=(0, 8))
+        t.bind("<Map>", lambda e: self._scope_refresh_label(), add="+")
+        self._scope_refresh_label()
 
         rrow = ttk.Frame(t); rrow.pack(anchor="w")
         r = ttk.Button(rrow, text="Randomize now", command=self.on_randomize)
@@ -3993,7 +4007,7 @@ class App:
         xb = ttk.Button(xrow, text="Export game_50.arc...", command=self.on_export_mix)
         xb.pack(side="left")
         self._action_widgets.append(xb)
-        t.bind("<Map>", lambda e: self._mix_refresh_summary())
+        t.bind("<Map>", lambda e: self._mix_refresh_summary(), add="+")
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=14)
         ttk.Label(t, text="Reset palettes", font=("Segoe UI", 11, "bold")).pack(anchor="w")
@@ -4216,8 +4230,14 @@ class App:
 
         def worker():
             try:
-                fn(progress=lambda m: self.q.put(("log", m)),
-                   status=lambda m: self.q.put(("status", m)), **kwargs)
+                rc = fn(progress=lambda m: self.q.put(("log", m)),
+                        status=lambda m: self.q.put(("status", m)), **kwargs)
+                # Engine commands return a non-zero exit code on failure (e.g. an
+                # unknown character) - report it instead of a silent "Done."
+                if isinstance(rc, int) and not isinstance(rc, bool) and rc != 0:
+                    self.q.put(("fail", f"{title} didn't complete - see the "
+                                        "Logs tab for the reason."))
+                    return
                 self.q.put(("done", None))
             except Exception as e:
                 self.q.put(("log", "\nERROR: " + str(e)))
@@ -4287,10 +4307,27 @@ class App:
                    + ("enabled." if self.ports_var.get() else "disabled."))
         self._stage_built = False       # stage lock dropdowns depend on this
 
-    def _on_stages_toggle(self):
-        randomize.set_config_key("randomize_stages", bool(self.stages_var.get()))
-        self.logln("Stage randomization "
-                   + ("enabled." if self.stages_var.get() else "disabled."))
+    def _on_scope_toggle(self, key):
+        on = bool(self.scope_vars[key].get())
+        randomize.set_config_key(key, on)
+        name = {"randomize_palettes": "Palettes", "randomize_stages": "Stages",
+                "randomize_fx": "FX"}[key]
+        self.logln(f"Randomize scope: {name} {'on' if on else 'off'}"
+                   + ("" if on else " (left as it is in your game)") + ".")
+        self._scope_refresh_label()
+
+    def _scope_refresh_label(self):
+        """'Randomizing: ...' line on the Randomize tab."""
+        cfg = randomize.get_config()
+        parts = [n for k, n in (("randomize_palettes", "palettes"),
+                                ("randomize_stages", "stages"),
+                                ("randomize_fx", "FX"))
+                 if cfg.get(k, True)]
+        if getattr(self, "scope_lbl", None) is not None:
+            self.scope_lbl.config(
+                text=("Randomizing: " + ", ".join(parts) if parts else
+                      "Nothing selected to randomize")
+                     + "   (change in Setup > Randomization scope)")
 
     def on_download(self):
         if not messagebox.askyesno(

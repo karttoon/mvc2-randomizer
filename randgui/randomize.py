@@ -174,7 +174,7 @@ def mix_summary():
     return {
         "chars_full": full, "chars_partial": partial, "chars_total": len(folders),
         "stages_locked": len(slocks), "stages_total": len(stagegal.SLOTS),
-        "stages_on": bool(cfg.get("randomize_stages")),
+        "stages_on": bool(cfg.get("randomize_stages", True)),
         "fx_mode": cfg.get("fx_mode", "Default"), "fx_locks": len(fx_locks()),
         "arc": arc, "arc_mtime": arc_mtime, "stale": stale,
     }
@@ -302,7 +302,7 @@ def verify_mix():
              for _t, vs in stagegal.sections() for v in vs}
     for slot, key in sorted(slocks.items()):
         got = lines.get(slot, [])
-        if not cfg.get("randomize_stages"):
+        if not cfg.get("randomize_stages", True):
             sbad.append(f"STG {slot}: stage randomizing is off - stages stay stock")
         elif not got:
             sbad.append(f"STG {slot}: not in the last Randomize log - Randomize again")

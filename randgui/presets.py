@@ -10,7 +10,8 @@ A preset is a JSON bundle of what someone curated:
     "stage_locks":     {"00": "c_XX_...", ...},
     "stage_playlists": {"name": ["stage key", ...]},
     "stage_playlist":  "active playlist name" | null,
-    "settings":        {"randomize_stages": bool, "distribute_ports": bool},
+    "settings":        {"randomize_palettes"/"randomize_stages"/"randomize_fx":
+                        bool, "distribute_ports": bool},
     "fx": {"mode", "chaos_seed", "gradient", "neon_color", "global_color",
            "state": {...}, "locks": {...}} }
 
@@ -234,7 +235,8 @@ def apply_preset(path, mode):
             act = p.get("stage_playlist")
             randomize.set_config_key("stage_playlist", act if act else None)
         for k, v in (p.get("settings") or {}).items():
-            if k in ("randomize_stages", "distribute_ports"):
+            if k in ("randomize_palettes", "randomize_stages", "randomize_fx",
+                     "distribute_ports"):
                 randomize.set_config_key(k, bool(v))
     if p.get("fx"):
         out["fx_locks"] = _apply_fx(p["fx"], mode)
@@ -279,7 +281,9 @@ def export_preset(out_path, name, author, description=""):
         "stage_locks": slocks,
         "stage_playlists": pls,
         "stage_playlist": active if active in pls else None,
-        "settings": {"randomize_stages": bool(cfg.get("randomize_stages")),
+        "settings": {"randomize_palettes": bool(cfg.get("randomize_palettes", True)),
+                     "randomize_stages": bool(cfg.get("randomize_stages", True)),
+                     "randomize_fx": bool(cfg.get("randomize_fx", True)),
                      "distribute_ports": bool(cfg.get("distribute_ports"))},
         "fx": fx,
     })

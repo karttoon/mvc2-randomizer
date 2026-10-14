@@ -105,7 +105,9 @@ DEFAULT_CONFIG_CONTENT = {
     "skins_path": None,
     "game_path": None,
     "seed": None,
-    "randomize_stages": False,
+    "randomize_palettes": True,
+    "randomize_stages": True,
+    "randomize_fx": True,
     "include_unreviewed": True,
     "distribute_ports": False,
     "stage_playlist": None,
@@ -119,7 +121,9 @@ CONFIG_DESCRIPTIONS = {
     "skins_path": "Path to skins folder (null = ./skins next to this script)",
     "game_path": "Game install directory (null = default Steam path)",
     "seed": "Fixed random seed for reproducible results (null = random each run)",
-    "randomize_stages": "Also randomize stages each run (needs stage data downloaded)",
+    "randomize_palettes": "Randomize character palettes each run (false = leave them as they are)",
+    "randomize_stages": "Randomize stages each run (needs stage data downloaded)",
+    "randomize_fx": "Recolor effect palettes each run (false = leave them as they are)",
     "include_unreviewed": "Randomize using kept AND unreviewed items (false = only kept)",
     "distribute_ports": "Merge ported/custom stages into any slot, not just Training",
     "stage_playlist": "Stage playlist name to randomize from (null = all kept stages)",
@@ -253,13 +257,15 @@ def resolve_character(query):
     separators ignored). On failure, suggests characters starting with
     the same first letter.
     """
-    q = query.lower().replace(" ", "").replace("_", "").replace("-", "").replace(".", "")
+    # Compare letters/digits only, so folder names (Wolverine_Bone_Claw) match
+    # proper names with punctuation (Wolverine (Bone Claw)).
+    q = re.sub(r"[^a-z0-9]", "", query.lower())
 
     # Build lookup table
     candidates = []
     for cid in PLAYABLE_CHARS:
         name = CHARACTERS[cid]
-        norm = name.lower().replace(" ", "").replace("-", "").replace(".", "")
+        norm = re.sub(r"[^a-z0-9]", "", name.lower())
         candidates.append((cid, name, norm))
 
     # Exact match (case-insensitive, ignoring separators)
@@ -1571,7 +1577,17 @@ def main():
     protected_kept = []     # previously-protected characters skipped this run
     newly_protected = []    # external edits detected on this run
 
-    for cid in sorted(PLAYABLE_CHARS, key=lambda c: CHARACTERS[c]):
+    # Randomization scope (Setup): each part can be switched off, and an off
+    # part is left exactly as it is in the game file - not reset, not touched.
+    do_palettes = config.get("randomize_palettes", True)
+    do_fx = config.get("randomize_fx", True)
+    if not do_palettes:
+        print("Palettes: not randomized (turned off in Randomization scope).")
+        run_log.append("Palettes: not randomized (turned off) - left as they were.")
+        run_log.append("")
+
+    for cid in (sorted(PLAYABLE_CHARS, key=lambda c: CHARACTERS[c])
+                if do_palettes else []):
         char_name = CHARACTERS[cid]
         sname = safe_name(char_name)
         folder_name = CHAR_ID_TO_FOLDER.get(cid, sname)
@@ -1753,7 +1769,10 @@ def main():
     # reverts the entries the PREVIOUS run recolored (fx_applied.json) back to
     # vanilla, so turning FX down/off never strands last run's colors.
     fx_mode = args.fx or config.get("fx_mode", "Default")
-    if rom is not None and not args.dry_run:
+    if not do_fx and not args.fx:
+        print("FX: not touched (turned off in Randomization scope).")
+        run_log.append("FX: not touched (turned off) - effect colors left as they were.")
+    if rom is not None and not args.dry_run and (do_fx or args.fx):
         skip_fx = set()
         for folder in state["protected"]:
             cid2 = FOLDER_TO_CHAR_ID.get(folder)
@@ -1835,7 +1854,7 @@ def main():
         print("[dry-run] FX recolor skipped (needs the ROM); run without --dry-run.")
 
     # Stage randomization (opt-in via --stages or config randomize_stages)
-    if (args.stages or config.get("randomize_stages")) and rom is not None:
+    if (args.stages or config.get("randomize_stages", True)) and rom is not None:
         rom, stage_log = randomize_stages(rom, DEFAULT_STAGES,
                                           args.quiet, args.dry_run,
                                           only_selected,
