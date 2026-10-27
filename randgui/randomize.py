@@ -5,9 +5,10 @@ Runs the existing engine in-process so nothing is reimplemented. The engine
 prints progress and derives its file paths from module globals, so we point
 those at the app's writable data dir and capture stdout into the GUI log.
 """
-import os, sys, io, json, contextlib
+import os, sys, io, re, json, time, contextlib
 
 import config
+import activity
 
 
 def _engine():
@@ -38,6 +39,12 @@ def _engine():
     engine.FX_STATE = config.FX_STATE_JSON
     engine.FX_LOCKS = config.FX_LOCKS_JSON
     engine.FX_APPLIED = config.FX_APPLIED_JSON
+    engine.ARCADE_AI_STATE = config.ARCADE_AI_JSON
+    try:
+        from mvc2_data import arcade_ai
+        arcade_ai.USER_DIR = config.ARCADE_PACK_DIR   # use a downloaded CPU pack if newer
+    except Exception:
+        pass
     return engine
 
 
@@ -80,15 +87,23 @@ def _run(argv, progress=None, status=None):
     os.makedirs(config.SKINS, exist_ok=True)
     old_argv = sys.argv
     sys.argv = ["mvc2_randomizer"] + argv
+    activity.log("run: " + " ".join(a for a in argv if not os.path.isabs(a)))
     try:
         with _capture(progress, status):
-            return engine.main() or 0
+            rc = engine.main() or 0
+        activity.log(f"run finished (exit {rc})")
+        return rc
+    except BaseException as e:
+        activity.error("run", e)
+        raise
     finally:
         sys.argv = old_argv
 
 
 # ----------------------------------------------------------------- public API
 def randomize(progress=None, status=None, seed=None, character=None, dry_run=False):
+    if not dry_run:
+        ensure_backup(progress)
     # --quiet: the full per-character list goes to last_run.txt, not the GUI log.
     argv = ["--skins", config.SKINS, "--config", config.CONFIG_JSON, "--quiet"]
     g = config.game_native()
@@ -110,6 +125,7 @@ def download_palettes(progress=None, status=None):
 def reset_palettes(progress=None, status=None, character=None):
     """Reset character palettes to vanilla (one character, or all if None);
     leaves other game data intact."""
+    ensure_backup(progress)
     argv = ["--reset-palettes", "--skins", config.SKINS]
     if character:
         argv += ["--character", character]
@@ -400,10 +416,7 @@ def stage_fit_detail():
                 rp = engine.repacked_port(pol, tex, cache)
             except Exception:
                 rp = None
-            if rp:
-                ports.append((v["key"], pol, tex, rp))
-            else:
-                never[v["key"]] = "couldn't be repacked - Training only"
+            ports.append((v["key"], pol, tex, rp))  # rp None: may fit some slots as is
     fit, why = {}, {}
     for sid in stagegal.SLOTS:
         if sid == stagegal.TRAINING:
@@ -416,19 +429,31 @@ def stage_fit_detail():
         sr, sb = stagemerge.slot_caps(spol, stex)
         keys, no = set(), dict(never)
         for key, pol, tex, rp in ports:
+            raw = engine.port_as_is({"pol": pol, "tex": tex}, spol, stex)
+            if raw:                                # fits as is - no repack needed
+                if stagemerge.merge_ok(spol, stex, sid, *raw)[0]:
+                    keys.add(key)
+                else:
+                    no[key] = "no room left in this slot's textures for the hidden-stage stub"
+                continue
+            if rp is None:
+                no[key] = "couldn't be repacked - Training only"
+                continue
             rpol, rtex = rp
-            if len(stagemerge.records(rpol)) > sr:
-                folded = engine.repacked_port(pol, tex, cache, max_tex=sr)
+            if len(stagemerge.records(rpol)) > sr - 1:      # one record stays free (DC stub)
+                folded = engine.repacked_port(pol, tex, cache, max_tex=sr - 1)
                 if not folded:
                     no[key] = (f"needs {len(stagemerge.records(rpol))} texture "
-                               f"pages, slot holds {sr}")
+                               f"pages, slot has room for {sr - 1}")
                     continue
                 rpol, rtex = folded
             pr, pb = stagemerge.port_caps(rpol, rtex)
-            if pr > sr:
-                no[key] = f"needs {pr} texture pages, slot holds {sr}"
+            if pr > sr - 1:
+                no[key] = f"needs {pr} texture pages, slot has room for {sr - 1}"
             elif pb > sb:
                 no[key] = f"textures {mb(pb)} > slot's {mb(sb)}"
+            elif not stagemerge.merge_ok(spol, stex, sid, rpol, rtex)[0]:
+                no[key] = "no room left in this slot's textures for the hidden-stage stub"
             else:
                 keys.add(key)
         fit[sid], why[sid] = keys, no
@@ -447,6 +472,7 @@ def get_config():
 
 def set_config_key(key, value):
     """Persist one config setting (comment keys are preserved)."""
+    activity.log(f"setting {key} = {value!r}")
     c = get_config()
     c[key] = value
     with open(config.CONFIG_JSON, "w", encoding="utf-8") as f:
@@ -793,3 +819,492 @@ def last_run_text():
     except Exception as e:
         return f"(could not read log: {e})"
     return "No randomize has been run yet — no log to show."
+
+
+# ------------------------------------------------------------- Arcade helpers
+ARCADE_DEFAULTS = {"arcade_enabled": True,     # master switch (Setup > Randomization scope)
+                   "arcade_ai": True, "arcade_teams": True, "arcade_endless": True,
+                   "arcade_stages": True, "arcade_max_rank": True,
+                   "arcade_lists_off": [],        # lists left out; new lists start ON
+                   "arcade_order": "random", "arcade_autostart": True,
+                   "arcade_team_source": "lists"}   # "lists" or "random"
+
+
+def arcade_module():
+    """The Arcade companion module (ensures mvc2_data is importable)."""
+    _engine()
+    from mvc2_data import arcade_companion
+    return arcade_companion
+
+
+def arcade_config():
+    """The Arcade settings, defaults filled in."""
+    cfg = get_config()
+    return {k: cfg.get(k, v) for k, v in ARCADE_DEFAULTS.items()}
+
+
+def arcade_live_features(acfg=None):
+    """True when any setting needs the companion running alongside the game."""
+    a = acfg or arcade_config()
+    # full CPU damage is always applied while Arcade is on, so the companion
+    # always has work to do then
+    return bool(a["arcade_enabled"])
+
+
+def arcade_team_lists():
+    """{list name: [team string, ...]} - the user's copy in data/, seeded from
+    the bundled defaults on first use."""
+    C = arcade_module()
+    if not os.path.exists(config.ARCADE_TEAMS_JSON):
+        src = os.path.join(config.resource_dir(), "mvc2_data", "arcade_teams.json")
+        os.makedirs(os.path.dirname(config.ARCADE_TEAMS_JSON), exist_ok=True)
+        C.save_team_lists(config.ARCADE_TEAMS_JSON, C.load_team_lists(src))
+    try:
+        return C.load_team_lists(config.ARCADE_TEAMS_JSON)
+    except (OSError, ValueError):
+        return {}
+
+
+def arcade_assist_info():
+    """{char id: {"types": [alpha, beta, gamma type names], "default": 0-2}} as
+    the game lists them (mvc2_data/arcade_assists.json); {} if not available."""
+    try:
+        with open(os.path.join(config.resource_dir(), "mvc2_data", "arcade_assists.json"),
+                  encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def arcade_save_team_lists(lists):
+    arcade_module().save_team_lists(config.ARCADE_TEAMS_JSON, lists)
+
+
+def arcade_settings(log=None):
+    """Companion settings from the config. Bad teams are skipped and reported."""
+    C = arcade_module()
+    a = arcade_config()
+    lists = arcade_team_lists()
+    active = [n for n in lists if n not in a["arcade_lists_off"]]
+    pool, errors = C.build_pool(lists, active)
+    for e in errors:
+        (log or print)("Arcade: skipped a team - " + e)
+    on = bool(a["arcade_enabled"])
+    rnd = a["arcade_team_source"] == "random"
+    return {"teams": bool(on and a["arcade_teams"] and (pool or rnd)), "random_teams": rnd,
+            "pool": pool, "active": active,
+            "order": a["arcade_order"],
+            "boss": "endless" if on and a["arcade_endless"] else "abyss",
+            "stages": bool(on and a["arcade_stages"]), "stage_pool": sorted(C.STAGES),
+            "max_rank": bool(on and a["arcade_max_rank"]),
+            "full_dmg": on}          # always: CPU deals/takes 100%, not stock's 75%
+
+
+def arcade_ai_wanted():
+    a = arcade_config()
+    return bool(a["arcade_enabled"] and a["arcade_ai"])
+
+
+def arcade_ai_status():
+    """(status, pack version) of the CPU-AI pack in the live game file, read-only.
+    status: installed / stock / ours-old / foreign / no-game / unavailable."""
+    eng = _engine()
+    try:
+        from mvc2_data import arcade_ai
+    except Exception:
+        return "unavailable", None
+    ver = arcade_ai.pack_version()
+    arc = config.game_arc()
+    if not arc or not os.path.exists(arc):
+        return "no-game", ver
+    try:
+        with open(config.ARCADE_AI_JSON, encoding="utf-8-sig") as f:
+            rec = json.load(f)
+    except (OSError, ValueError):
+        rec = {}
+    try:
+        return arcade_ai.status(eng.read_arc(arc), rec), ver
+    except Exception:
+        return "unavailable", ver
+
+
+def arcade_apply_ai(progress=None, status=None):
+    """Install/remove the CPU-AI pack right now (nothing else is changed).
+    Returns 0, or 1 when the game is running / the file can't be written."""
+    eng = _engine()
+    say = progress or print
+    if arcade_module().game_running():
+        say("The game is running - close it first (its game file can't be changed while it's open).")
+        return 1
+    ensure_backup(progress)
+    arc = config.game_arc()
+    if not arc or not os.path.exists(arc):
+        say("Game folder not set (Setup tab).")
+        return 1
+    rom = eng.read_arc(arc)
+    eng.validate_rom(rom)
+    log = []
+    with contextlib.redirect_stdout(io.StringIO()):
+        rom, record = eng.sync_arcade_ai(rom, arcade_ai_wanted(), log)
+    msgs = [m for m in log if m]
+    if record is None:
+        say(msgs[0] if msgs else "Arcade (WIP): skipped")
+        return 1
+    if msgs and "installed" not in msgs[0] and "removed" not in msgs[0] \
+            and "updated" not in msgs[0]:
+        say(msgs[0])                                  # foreign mod - left alone
+        return 0
+    if msgs:
+        eng.write_arc(arc, rom)
+        with open(config.ARCADE_AI_JSON, "w") as f:
+            json.dump(record, f)
+        say(msgs[0])
+    else:
+        say("Arcade (WIP): " + ("smarter CPU already installed" if arcade_ai_wanted()
+                                else "original CPU already in place")
+            + " - nothing to change.")
+    return 0
+
+
+
+# ------------------------------------------------- backup / game check / restore
+STATE_FILES = ("PALETTE_STATE", "STAGE_STATE", "FX_APPLIED_JSON", "ARCADE_AI_JSON")
+
+
+def _gamecheck():
+    _engine()
+    from mvc2_data import gamecheck
+    return gamecheck
+
+
+def backup_info():
+    """What the backup holds ({date, md5, size, version, report}) or None."""
+    try:
+        with open(config.BACKUP_JSON, encoding="utf-8") as f:
+            info = json.load(f)
+        return info if os.path.exists(config.BACKUP_ARC) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _file_md5(path):
+    import hashlib
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def ensure_backup(progress=None, force=False):
+    """Back up the game file AS IT IS - once, before this app ever changes it
+    (force=True replaces it). Also keeps a copy of the app's state files so a
+    later "restore original" knows which changes were its own. Never fails
+    the caller: problems are logged."""
+    if backup_info() and not force:
+        return backup_info()
+    arc = config.game_arc()
+    if not arc or not os.path.exists(arc):
+        return None
+    import shutil
+    try:
+        os.makedirs(os.path.join(config.BACKUP_DIR, "state"), exist_ok=True)
+        tmp = config.BACKUP_ARC + ".tmp"
+        shutil.copyfile(arc, tmp)
+        os.replace(tmp, config.BACKUP_ARC)
+        for n in STATE_FILES:
+            src = getattr(config, n)
+            dst = os.path.join(config.BACKUP_DIR, "state", os.path.basename(src))
+            if os.path.exists(src):
+                shutil.copyfile(src, dst)
+            elif os.path.exists(dst):
+                os.remove(dst)
+        report = check_game(save=False)
+        info = {"date": time.strftime("%Y-%m-%d %H:%M"), "size": os.path.getsize(arc),
+                "md5": _file_md5(arc), "version": config.VERSION, "report": report}
+        with open(config.BACKUP_JSON, "w", encoding="utf-8") as f:
+            json.dump(info, f, indent=1)
+        msg = f"Backed up your game file as it is ({info['size'] // 2**20} MB)."
+        activity.log(msg + f" md5 {info['md5']}")
+        if progress:
+            progress(msg)
+        return info
+    except Exception as e:
+        activity.error("backup", e)
+        if progress:
+            progress(f"Couldn't back up the game file: {e}")
+        return None
+
+
+def check_game(save=True):
+    """Compare the live game file with stock. Returns the report (see
+    mvc2_data.gamecheck.check) plus 'date'; None if the game isn't found."""
+    arc = config.game_arc()
+    if not arc or not os.path.exists(arc):
+        return None
+    eng = _engine()
+    G = _gamecheck()
+    try:
+        rep = G.check(eng.read_arc(arc))
+    except Exception as e:
+        activity.error("game check", e)
+        return None
+    rep["date"] = time.strftime("%Y-%m-%d %H:%M")
+    lines = [f"{k}: {v}" for k, v in G.summary_lines(rep) if v] or ["all stock"]
+    activity.log("game check - " + "; ".join(lines))
+    if save:
+        try:
+            with open(config.GAME_CHECK_JSON, "w", encoding="utf-8") as f:
+                json.dump(rep, f, indent=1)
+        except OSError:
+            pass
+    return rep
+
+
+SWITCH_FOR = {"palettes": "randomize_palettes", "fx": "randomize_fx",
+              "stages": "randomize_stages", "cpu": "arcade_ai"}
+PART_NAMES = {"palettes": "Palettes", "fx": "FX colors", "stages": "Stages", "cpu": "CPU"}
+
+
+def restore(parts, progress=None, status=None):
+    """Put parts of the game back. parts = {part: "stock"|"original"} for part
+    in palettes / fx / stages / cpu, or {"all": "original"} for the whole
+    backed-up file. Turns the matching randomize switches off so the next
+    launch doesn't change them again. Returns 0 on success."""
+    import shutil
+    say = progress or print
+    activity.log(f"restore requested: {parts}")
+    if arcade_module().game_running():
+        say("The game is running - close it first, then restore.")
+        return 1
+    arc = config.game_arc()
+    if not arc or not os.path.exists(arc):
+        say("Game folder not set (Settings tab).")
+        return 1
+    if any(v == "original" for v in parts.values()) and not backup_info():
+        say("There's no backup of your original game file to restore from.")
+        return 1
+    ensure_backup(progress)
+    eng = _engine()
+    G = _gamecheck()
+    snap = os.path.join(config.BACKUP_DIR, "state")
+    try:
+        if parts.get("all") == "original":
+            shutil.copyfile(config.BACKUP_ARC, arc)
+            for n in STATE_FILES:
+                src = os.path.join(snap, os.path.basename(getattr(config, n)))
+                dst = getattr(config, n)
+                if os.path.exists(src):
+                    shutil.copyfile(src, dst)
+                elif os.path.exists(dst):
+                    os.remove(dst)
+            for k in ("randomize_palettes", "randomize_stages", "randomize_fx",
+                      "arcade_enabled"):
+                set_config_key(k, False)
+            say(f"Restored your original game file (backed up {backup_info()['date']}). "
+                "Randomizing is switched off for everything.")
+            activity.log("restore done: whole original file")
+            return 0
+        rom = eng.read_arc(arc)
+        orig = eng.read_arc(config.BACKUP_ARC) if "original" in parts.values() else None
+        new = G.restore_parts(rom, parts, original=orig)
+        eng.write_arc(arc, new)
+        _restore_state(eng, parts, new, snap)
+        for part in parts:
+            if part in SWITCH_FOR:
+                set_config_key(SWITCH_FOR[part], False)
+        say("Restored: " + ", ".join(
+            f"{PART_NAMES[p]} to {'your original' if h == 'original' else 'stock'}"
+            for p, h in parts.items()) + ". Randomizing is switched off for those.")
+        activity.log("restore done")
+        return 0
+    except Exception as e:
+        activity.error("restore", e)
+        say(f"Restore failed: {e}")
+        return 1
+
+
+def _restore_state(eng, parts, rom, snap):
+    """Keep the app's own records in step with what restore wrote, so its
+    protection of other people's edits stays right."""
+    def load(path, default):
+        try:
+            with open(path, encoding="utf-8-sig") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return default
+
+    from mvc2_data.characters import CHARACTERS, safe_name
+    if parts.get("palettes") or parts.get("fx"):
+        st = eng.load_palette_state()
+        snap_st = load(os.path.join(snap, "palette_state.json"), {})
+        for cid in eng.STEAM_PALETTE_OFFSETS:
+            folder = safe_name(CHARACTERS[cid])
+            was = folder in snap_st.get("protected", []) or folder in st["protected"]
+            if was and parts.get("palettes") != "stock":
+                # someone else's colours are (still) there - keep protecting them
+                if folder not in st["protected"]:
+                    st["protected"].append(folder)
+                continue
+            st["written"][folder] = eng.block_hash(rom, cid)
+            if folder in st["protected"]:
+                st["protected"].remove(folder)
+        eng.save_palette_state(st)
+    if parts.get("fx"):
+        fx = {} if parts["fx"] == "stock" else load(
+            os.path.join(snap, "fx_applied.json"), {})
+        with open(config.FX_APPLIED_JSON, "w", encoding="utf-8") as f:
+            json.dump(fx, f)
+    if parts.get("stages"):
+        if parts["stages"] == "original":
+            st = load(os.path.join(snap, "stage_state.json"), None) or eng.load_stage_state()
+        else:
+            st = eng.load_stage_state()
+            st["protected"] = []
+            st["written"] = {}
+        eng.save_stage_state(st)
+    if parts.get("cpu"):
+        rec = {} if parts["cpu"] == "stock" else load(
+            os.path.join(snap, "arcade_ai_installed.json"), {})
+        with open(config.ARCADE_AI_JSON, "w", encoding="utf-8") as f:
+            json.dump(rec, f)
+
+
+def support_bundle(dest):
+    """Zip the logs, settings and game-check results (never the game file
+    itself) into dest, for sending to the developer."""
+    import platform
+    import zipfile
+    rep = check_game(save=True)
+    info = [f"MvC2 Randomizer {config.VERSION}",
+            f"frozen exe: {getattr(sys, 'frozen', False)}",
+            f"Windows: {platform.platform()}",
+            f"app folder: {config.ROOT}",
+            f"game file: {config.game_arc()}"]
+    arc = config.game_arc()
+    if arc and os.path.exists(arc):
+        info.append(f"game file size {os.path.getsize(arc)}, md5 {_file_md5(arc)}")
+    b = backup_info()
+    info.append(f"backup: {b['date'] + ', md5 ' + b['md5'] if b else 'none'}")
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("system_info.txt", "\n".join(info) + "\n")
+        if rep is not None:
+            z.writestr("game_check.json", json.dumps(rep, indent=1))
+        for name in sorted(os.listdir(config.STATE)):
+            p = os.path.join(config.STATE, name)
+            if os.path.isfile(p) and name.lower().endswith((".json", ".txt")):
+                z.write(p, "data/" + name)
+        if os.path.exists(config.BACKUP_JSON):
+            z.write(config.BACKUP_JSON, "data/backup/backup.json")
+    activity.log(f"support info saved to {dest}")
+    return dest
+
+
+# ------------------------------------------------ Arcade CPU pack updates
+# Network access ONLY from these functions, ONLY when the user clicks a button
+# (Arcade tab). Nothing here runs on its own.
+PACK_NAMES = re.compile(r"^(ai_pack\.json|known_md5\.json|(entries|stock)/\d+\.bin)$")
+
+
+def _ver(v):
+    try:
+        return tuple(int(x) for x in str(v).split("."))
+    except ValueError:
+        return (0,)
+
+
+def arcade_pack_info():
+    """{'built', 'source' ('downloaded'|'built in'), 'bundled'} of the CPU pack in use."""
+    _engine()
+    from mvc2_data import arcade_ai
+    d = arcade_ai.active_dir()
+    return {"built": arcade_ai.pack_version(d),
+            "source": "downloaded" if d != arcade_ai.PACK_DIR else "built in",
+            "bundled": arcade_ai.pack_version(arcade_ai.PACK_DIR),
+            "downloaded": arcade_ai.pack_version(config.ARCADE_PACK_DIR)
+            if os.path.isdir(config.ARCADE_PACK_DIR) else None}
+
+
+def _fetch(url, limit=64 << 20):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": f"MvC2Randomizer/{config.VERSION}"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("download is larger than expected")
+    return data
+
+
+def arcade_check_update():
+    """Read the published manifest (a few KB). Returns {'latest', 'current',
+    'newer', 'size', 'needs_app'}; raises on a network/format problem."""
+    activity.log("CPU pack: checking for an update (user request)")
+    man = json.loads(_fetch(config.ARCADE_PACK_BASE + "manifest.json", 1 << 20))
+    info = arcade_pack_info()
+    latest = man.get("built")
+    out = {"latest": latest, "current": info["built"], "size": man.get("zip_size", 0),
+           "newer": bool(latest and latest > (info["built"] or "")),
+           "needs_app": None, "manifest": man}
+    if man.get("format") != 1:
+        out["needs_app"] = "a newer version of the app"
+    elif _ver(man.get("min_app", "0")) > _ver(config.VERSION):
+        out["needs_app"] = f"app version {man['min_app']} or newer"
+    activity.log(f"CPU pack: latest {latest}, have {info['built']} ({info['source']})")
+    return out
+
+
+def arcade_download_update(progress=None, status=None, manifest=None):
+    """Download, verify and install the published CPU pack into data/arcade_pack.
+    Nothing is used unless every check passes. Returns 0 on success."""
+    import hashlib, shutil, zipfile
+    say = progress or print
+    _engine()
+    from mvc2_data import arcade_ai
+    try:
+        man = manifest or json.loads(_fetch(config.ARCADE_PACK_BASE + "manifest.json", 1 << 20))
+        if man.get("format") != 1 or _ver(man.get("min_app", "0")) > _ver(config.VERSION):
+            say("This CPU pack needs a newer version of the app - not installed.")
+            return 1
+        say(f"Downloading CPU pack {man.get('built')} ({man.get('zip_size', 0) // 1024} KB)...")
+        blob = _fetch(config.ARCADE_PACK_BASE + "arcade_pack.zip")
+        if hashlib.sha256(blob).hexdigest() != man.get("zip_sha256") or \
+                len(blob) != man.get("zip_size"):
+            say("The download didn't match the published fingerprint - nothing was installed.")
+            activity.log("CPU pack: download REJECTED (sha256/size mismatch)")
+            return 1
+        tmp = config.ARCADE_PACK_DIR + ".new"
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        with zipfile.ZipFile(io.BytesIO(blob)) as z:
+            for name in z.namelist():
+                if name.endswith("/"):
+                    continue
+                if not PACK_NAMES.match(name):          # only the files a pack may hold
+                    raise ValueError(f"unexpected file in the pack: {name}")
+                dst = os.path.join(tmp, *name.split("/"))
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(dst, "wb") as f:
+                    f.write(z.read(name))
+        ok, msg = arcade_ai.validate_pack(tmp)
+        if not ok or arcade_ai.pack_version(tmp) != man.get("built"):
+            shutil.rmtree(tmp, ignore_errors=True)
+            say(f"The CPU pack failed its checks ({msg}) - nothing was installed.")
+            activity.log(f"CPU pack: download REJECTED ({msg})")
+            return 1
+        shutil.rmtree(config.ARCADE_PACK_DIR, ignore_errors=True)
+        os.replace(tmp, config.ARCADE_PACK_DIR)
+        say(f"CPU pack {man.get('built')} downloaded and checked ({msg}). It goes into your "
+            "game on the next Randomize or launch - or click Apply now (game closed).")
+        activity.log(f"CPU pack: installed {man.get('built')} into data/arcade_pack")
+        return 0
+    except Exception as e:
+        activity.error("CPU pack download", e)
+        say(f"Couldn't get the CPU pack: {e}")
+        return 1
+
+
+def arcade_remove_download():
+    """Go back to the CPU pack built into the app."""
+    import shutil
+    shutil.rmtree(config.ARCADE_PACK_DIR, ignore_errors=True)
+    activity.log("CPU pack: downloaded pack removed - using the built-in one")

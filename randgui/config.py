@@ -9,7 +9,7 @@ import os, sys, subprocess
 
 # Single source of truth for the app version (shown in the GUI, used for
 # release tags). Bump this when cutting a new version.
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 
 
 def app_dir():
@@ -58,6 +58,18 @@ STAGE_PLAYLISTS_JSON = os.path.join(STATE, "stage_playlists.json")
 FX_STATE_JSON = os.path.join(STATE, "fx_state.json")
 FX_LOCKS_JSON = os.path.join(STATE, "fx_locks.json")
 FX_APPLIED_JSON = os.path.join(STATE, "fx_applied.json")
+ARCADE_AI_JSON = os.path.join(STATE, "arcade_ai_installed.json")
+ARCADE_TEAMS_JSON = os.path.join(STATE, "arcade_teams.json")   # editable CPU team lists
+ARCADE_LOG = os.path.join(STATE, "arcade_log.txt")
+BACKUP_DIR = os.path.join(STATE, "backup")          # the user's game file as it was
+BACKUP_ARC = os.path.join(BACKUP_DIR, "game_50.original.arc")
+BACKUP_JSON = os.path.join(BACKUP_DIR, "backup.json")
+GAME_CHECK_JSON = os.path.join(STATE, "game_check.json")
+ARCADE_PACK_DIR = os.path.join(STATE, "arcade_pack")    # a downloaded CPU pack
+# Where new CPU packs are published - a GitHub release whose files are replaced
+# on each update, so these URLs never change. Only fetched when the user clicks.
+ARCADE_PACK_BASE = ("https://github.com/karttoon/mvc2-randomizer/releases/download/"
+                    "arcade-pack/")             # companion log (Steam-launcher runs)
 
 # Canonical state filename -> legacy names to migrate from (older app roots and
 # pre-normalization names). Each is moved into data/ under the canonical name.

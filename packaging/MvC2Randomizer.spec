@@ -25,7 +25,21 @@ HIDDEN = [
     "mvc2_data.stagemerge", "mvc2_data.stagemerge.tex",
     "mvc2_data.stagemerge.repack_tex", "mvc2_data.stagemerge.merge_slot",
     "numpy",
+    # Arcade tab: CPU-AI pack installer + live memory companion
+    "mvc2_data.arcade_ai", "mvc2_data.ai_pack_apply", "mvc2_data.arcade_companion",
+    # game check / backup / restore, and the activity log
+    "mvc2_data.gamecheck", "activity",
 ]
+
+# The Arcade CPU-AI pack: manifest, the pack's AI files, the stock ones
+# (restored when the AI is turned off) and earlier versions' md5s.
+# Refresh from ArcadeLogic with: py tools/sync_arcade.py --build
+_AI = os.path.join(ROOT, "mvc2_data", "ai_pack")
+AI_DATAS = [(os.path.join(_AI, f), "mvc2_data/ai_pack")
+            for f in ("ai_pack.json", "known_md5.json") if os.path.exists(os.path.join(_AI, f))]
+for _sub in ("entries", "stock"):
+    AI_DATAS += [(os.path.join(_AI, _sub, f), "mvc2_data/ai_pack/" + _sub)
+                 for f in sorted(os.listdir(os.path.join(_AI, _sub)))]
 
 a = Analysis(
     [os.path.join(RANDGUI, "gui.py")],
@@ -46,7 +60,16 @@ a = Analysis(
            (os.path.join(ROOT, "mvc2_data", "fx_targets.json"), "mvc2_data"),
            (os.path.join(ROOT, "mvc2_data", "fx_sprites.bin"), "mvc2_data"),
            (os.path.join(ROOT, "mvc2_data", "fx_bodysprites.bin"), "mvc2_data"),
-           (os.path.join(ROOT, "randgui", "core_colors.json"), "randgui")],
+           (os.path.join(ROOT, "randgui", "core_colors.json"), "randgui"),
+           # default Arcade CPU team lists (copied to data/ on first use)
+           (os.path.join(ROOT, "mvc2_data", "arcade_teams.json"), "mvc2_data"),
+           # assist types per character, for the team editor
+           (os.path.join(ROOT, "mvc2_data", "arcade_assists.json"), "mvc2_data"),
+           # stock-game reference (tools/build_stock_reference.py): every file's
+           # fingerprint for the game check, and the stock stages for restore
+           (os.path.join(ROOT, "mvc2_data", "stock_entries.json"), "mvc2_data"),
+           (os.path.join(ROOT, "mvc2_data", "stock_stages.bin"), "mvc2_data")]
+          + AI_DATAS,
     hiddenimports=HIDDEN,
     hookspath=[],
     # Guard sys.stdout/stderr (None in a windowed build) before numpy inits.

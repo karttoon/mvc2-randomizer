@@ -188,12 +188,20 @@ def repack(pol, tex, max_tex=None, max_w=1024, max_h=1024):
     for m in meshes:
         by_tid.setdefault(m["tid"], []).append(m)
 
+    # A texture whose UVs run outside 0..1 is TILED (repeated across a floor).
+    # Repeating only works while it has a record of its own - inside a shared
+    # atlas the repeat cycles through the whole atlas (CPS2_StageRE notes/30).
+    # Keep those out of the atlases: own record, native size, bytes and UVs as is.
+    native = [tid for tid, rec in enumerate(recs) if tid in by_tid and any(
+        u < -0.01 or u > 1.01 or v < -0.01 or v > 1.01
+        for m in by_tid[tid] for _, u, v in m["verts"])]
+
     # decode each drawn texture and crop it to the rect its meshes address
     pieces = {}
     for tid, rec in enumerate(recs):
         ms = by_tid.get(tid)
-        if not ms:
-            continue                                    # a record nothing draws: drop it
+        if not ms or tid in native:
+            continue                                    # undrawn: drop it; tiled: kept native
         img = TEX.decode(tex[rec["off"]:rec["off"] + rec["w"] * rec["h"] * 2],
                          rec["w"], rec["h"], rec["fmt"])
         x0, y0, x1, y1 = used_rect(rec, ms)
@@ -207,7 +215,7 @@ def repack(pol, tex, max_tex=None, max_w=1024, max_h=1024):
         groups[fmt] = guillotine(items, max_w, max_h)
     # fold atlases down to the slot's record limit (stack the pair that joins
     # smallest, repeatedly), stopping when a pass can't reduce further
-    while max_tex and sum(len(v) for v in groups.values()) > max_tex:
+    while max_tex and sum(len(v) for v in groups.values()) + len(native) > max_tex:
         f = max(groups, key=lambda k: len(groups[k]))
         n = len(groups[f])
         groups[f] = merge_bins(groups[f], n - 1, max_h)
@@ -245,6 +253,12 @@ def repack(pol, tex, max_tex=None, max_w=1024, max_h=1024):
                 nv = (AH - py - ih + v * rec["h"]) / AH
                 struct.pack_into("<2f", b, o + 24, nu, _safe_v(nv))
 
+    # tiled textures follow the atlases as records of their own; their meshes
+    # only need the new record index (size bits and UVs stay as they were)
+    for k, tid in enumerate(native):
+        for m in by_tid[tid]:
+            struct.pack_into("<I", b, m["at"] + 4, len(atlases) + k)
+
     # rewrite the record table into the stock table's own slots
     newrecs = b""
     off = 0
@@ -254,6 +268,12 @@ def repack(pol, tex, max_tex=None, max_w=1024, max_h=1024):
         enc = TEX.encode(at, fmt)
         blob += enc
         off += len(enc)
+    for tid in native:
+        rec = recs[tid]
+        raw = tex[rec["off"]:rec["off"] + rec["w"] * rec["h"] * 2]
+        newrecs += struct.pack("<HHBBHII", rec["w"], rec["h"], rec["fmt"], rec["fl"], 0, TEX_RAM + off, 0)
+        blob += raw
+        off += len(raw)
     newrecs += b"\0" * REC
     if len(newrecs) > (tre - trs):
         raise ValueError("repacked record table longer than the original - unsupported")

@@ -23,6 +23,7 @@ import palettes
 import locks
 import stagegal
 import presets
+import activity
 
 APP_TITLE = "MvC2 Randomizer"
 
@@ -34,6 +35,7 @@ class App:
         self.busy = False
         self._action_widgets = []
         self._slot_fits = None          # {slot: {port key,...}} lock-fit map (lazy)
+        self._arcade = None             # running Arcade companion thread
 
         root.title(APP_TITLE)
         # Open large and centered so every tab's content is visible without
@@ -55,6 +57,9 @@ class App:
 
         self.seed_var = tk.StringVar()
 
+        activity.session_start("app")
+        root.report_callback_exception = self._report_callback_exception
+        self._had_config = os.path.exists(config.CONFIG_JSON)
         # Relocate pre-1.0.3 root state files and ensure dirs BEFORE any tab
         # reads verdicts/config from the new data/ folder.
         config.migrate_state()
@@ -70,6 +75,9 @@ class App:
         # Announce protections detected while running as a Steam launcher
         # (that mode is silent, so the news waits for the next GUI open).
         self.root.after(400, self._announce_new_protected)
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(800, self._arcade_autostart)
+        self.root.after(500, self._maybe_first_run)
 
     # ---------------------------------------------------------------- layout
     def _build_header(self):
@@ -80,7 +88,8 @@ class App:
                   font=("Segoe UI", 15, "bold")).pack(side="left")
         ttk.Label(titlerow, text=f"v{config.VERSION}", foreground="#999",
                   font=("Segoe UI", 9)).pack(side="right", pady=(6, 0))
-        ttk.Label(top, text="Randomizes your curated palettes and stages every time you launch the game.",
+        ttk.Label(top, text="Fresh palettes, stages and effect colors for MvC2 - plus a smarter "
+                       "Arcade mode (work in progress).",
                   foreground="#555").pack(anchor="w")
         self.status_lbl = ttk.Label(top, text="", font=("Segoe UI", 9))
         self.status_lbl.pack(anchor="w", pady=(6, 0))
@@ -93,13 +102,15 @@ class App:
         self._tab_palettes(nb)
         self._tab_stages(nb)
         self._tab_fx(nb)
+        self._tab_arcade(nb)
         self._tab_locks(nb)
         self._tab_logs(nb)
         self._tab_setup(nb)
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        self._select_tab("Home")
 
     def _tab_logs(self, nb):
-        t = ttk.Frame(nb, padding=(10, 8)); nb.add(t, text="6. Logs")
+        t = ttk.Frame(nb, padding=(10, 8)); nb.add(t, text="Logs")
         self.log = scrolledtext.ScrolledText(t, wrap="word", state="disabled",
                                              font=("Consolas", 9))
         self.log.pack(fill="both", expand=True)
@@ -148,7 +159,7 @@ class App:
     SETUP_WRAP = 900
 
     def _tab_setup(self, nb):
-        outer = ttk.Frame(nb); nb.add(outer, text="7. Setup")
+        outer = ttk.Frame(nb); nb.add(outer, text="Settings")
         t = ttk.Frame(self._scroll_body(outer), padding=14)
         t.pack(fill="both", expand=True)
         ttk.Label(t, text="Game install", font=("Segoe UI", 11, "bold")).pack(anchor="w")
@@ -179,25 +190,8 @@ class App:
         self._action_widgets.append(b)
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
-        ttk.Label(t, text="Randomization scope", font=("Segoe UI", 11, "bold")
+        ttk.Label(t, text="Randomize pool", font=("Segoe UI", 11, "bold")
                   ).pack(anchor="w")
-        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
-                  text="Choose what each Randomize (and each launch) changes. "
-                       "Anything unchecked is left exactly as it is in your game "
-                       "- e.g. reset palettes to vanilla, then uncheck Palettes "
-                       "and FX to shuffle only the stages."
-                  ).pack(anchor="w", pady=(2, 4))
-        scope = ttk.Frame(t); scope.pack(anchor="w", pady=(0, 8))
-        cfg0 = randomize.get_config()
-        self.scope_vars = {}
-        for key, label in (("randomize_palettes", "Palettes"),
-                           ("randomize_stages", "Stages"),
-                           ("randomize_fx", "FX (effect colors)")):
-            var = tk.BooleanVar(value=bool(cfg0.get(key, True)))
-            self.scope_vars[key] = var
-            ttk.Checkbutton(scope, text=label, variable=var,
-                            command=lambda k=key: self._on_scope_toggle(k)
-                            ).pack(side="left", padx=(0, 16))
         ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
                   text="By default the randomizer uses both the items you've "
                        "kept and any you haven't reviewed yet. Uncheck this to "
@@ -219,7 +213,7 @@ class App:
                        "Training slot. Turn this on to merge them into every "
                        "stage slot too, so any port can show up anywhere. Merges "
                        "happen automatically at launch (a few seconds the first "
-                       "time, instant after that). Needs stages enabled above."
+                       "time, instant after that). Needs Stages switched on (Home tab)."
                   ).pack(anchor="w", pady=(2, 6))
         self.ports_var = tk.BooleanVar(
             value=bool(randomize.get_config().get("distribute_ports", False)))
@@ -228,14 +222,14 @@ class App:
                         command=self._on_ports_toggle).pack(anchor="w")
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
-        ttk.Label(t, text="Gallery content", font=("Segoe UI", 11, "bold")
+        ttk.Label(t, text="Content", font=("Segoe UI", 11, "bold")
                   ).pack(anchor="w")
         ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
-                  text="Downloads and updates everything from the community "
-                       "gallery: palettes, stages, previews, and curated "
-                       "mixes. Safe to run any time - only new or updated "
-                       "files are fetched, and your reviews and drop-ins are "
-                       "preserved."
+                  text="Gallery: downloads the community palettes, stages, "
+                       "previews and curated mixes (about 750 MB each time). Your "
+                       "reviews and drop-ins are kept. CPU pack: checks for a "
+                       "newer Arcade CPU and downloads it if you say so (well "
+                       "under 1 MB). Nothing is downloaded unless you click."
                   ).pack(anchor="w", pady=(2, 6))
         grow = ttk.Frame(t); grow.pack(anchor="w")
         gd = ttk.Button(grow, text="Download / Update gallery content",
@@ -245,6 +239,10 @@ class App:
         rf = ttk.Button(grow, text="Rescan local files", command=self.on_rescan)
         rf.pack(side="left", padx=(8, 0))
         self._action_widgets.append(rf)
+        cp = ttk.Button(grow, text="Check for CPU pack updates...",
+                        command=self._arcade_pack_check)
+        cp.pack(side="left", padx=(8, 0))
+        self._action_widgets.append(cp)
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
         ttk.Label(t, text="Curated mixes (content choices)",
@@ -257,7 +255,7 @@ class App:
                        "adopts all of it; \"fill gaps\" only adds what you "
                        "haven't decided. Your own drop-ins are never touched. "
                        "(To hand someone the finished game file instead, use "
-                       "the Randomize tab.)"
+                       "the Home tab.)"
                   ).pack(anchor="w", pady=(2, 6))
         prow = ttk.Frame(t); prow.pack(anchor="w")
         self.preset_var = tk.StringVar()
@@ -282,6 +280,25 @@ class App:
         self._refresh_presets()
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Label(t, text="Backup, setup and support", font=("Segoe UI", 11, "bold")
+                  ).pack(anchor="w")
+        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="The randomizer keeps a backup of your game file as it was "
+                       "before it changed anything (Home > Restore puts it back). "
+                       "\"Save support info\" zips your settings and logs - not "
+                       "the game file - for sending to the developer when "
+                       "something goes wrong."
+                  ).pack(anchor="w", pady=(2, 6))
+        srow = ttk.Frame(t); srow.pack(anchor="w")
+        b1 = ttk.Button(srow, text="Restore...", command=self.on_restore)
+        b1.pack(side="left"); self._action_widgets.append(b1)
+        b2 = ttk.Button(srow, text="Run first-time setup again",
+                        command=lambda: self._first_run(existing=True))
+        b2.pack(side="left", padx=(8, 0)); self._action_widgets.append(b2)
+        b3 = ttk.Button(srow, text="Save support info...", command=self.on_support_info)
+        b3.pack(side="left", padx=(8, 0))
+
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
         ttk.Label(t, text="Danger zone", font=("Segoe UI", 11, "bold"),
                   foreground="#b00").pack(anchor="w")
         ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
@@ -304,7 +321,7 @@ class App:
     SELECT_COLOR = "#2b6cb0"      # grid: palettes picked for comparison
 
     def _tab_palettes(self, nb):
-        t = ttk.Frame(nb, padding=10); nb.add(t, text="2. Palette Gallery")
+        t = ttk.Frame(nb, padding=10); nb.add(t, text="Palette Gallery")
 
         top = ttk.Frame(t); top.pack(fill="x")
         ttk.Label(top, text="Character:").pack(side="left")
@@ -427,7 +444,7 @@ class App:
         if text.endswith("Palette Gallery"):
             self.file_list.focus_set()
             self.root.after(80, self._render_image)   # pane is now sized
-        elif text.endswith("Lock Selections"):
+        elif text.endswith("Locks"):
             self._lock_populate_chars()
             self._lock_load()
             self._slock_populate()
@@ -605,7 +622,7 @@ class App:
         unrev = sum(self._unrev.values())
         self.palettes_lbl.config(
             text=(f"{total:,} palettes    ·    {unrev} unreviewed    ·    {rej} rejected"
-                  if total else "No palettes yet - run Download / Update on the Setup tab."))
+                  if total else "No palettes yet - run Download / Update in Settings."))
 
     # ---- image-review view ----
     def _on_unrev_toggle(self):
@@ -686,8 +703,16 @@ class App:
             cell = tk.Frame(self.mix_bar, highlightthickness=2,
                             highlightbackground="#bbbbbb", cursor="hand2")
             cell.pack(side="left", padx=2)
-            tk.Label(cell, text=f"{i + 1}  {b}", font=("Segoe UI", 8, "bold"),
-                     foreground="#555").pack()
+            head = tk.Frame(cell)
+            head.pack(fill="x")
+            hl = tk.Label(head, text=f"{i + 1}  {b}", font=("Segoe UI", 8, "bold"),
+                          foreground="#555")
+            hl.pack(side="left", padx=(4, 0), expand=True)
+            if fn:                       # clear just this slot - the rest stay put
+                x = tk.Label(head, text="✕", font=("Segoe UI", 8, "bold"),
+                             foreground="#b00020", cursor="hand2")
+                x.pack(side="right", padx=(0, 3))
+                x.bind("<Button-1>", lambda e, bb=b: (self._mix_set(bb, None), "break")[1])
             img = None
             if fn:
                 try:
@@ -713,12 +738,12 @@ class App:
                 if fn and 0 <= j < 6:
                     a.bind("<Button-1>", lambda e, s=b, t=locks.BUTTONS[j]:
                            (self._mix_swap(s, t), "break")[1])
-            for w in (cell, pic) + tuple(cell.winfo_children()[:1]):
+            for w in (cell, pic, head, hl):
                 self._mix_widget_btn[str(w)] = b
                 w.bind("<ButtonPress-1>", lambda e, bb=b: self._mix_press(e, bb))
                 w.bind("<B1-Motion>", self._mix_motion)
                 w.bind("<ButtonRelease-1>", self._mix_release)
-                w.bind("<Button-3>", lambda e, bb=b: self._mix_set(bb, None))
+                w.bind("<Button-3>", lambda e, bb=b: self._mix_slot_menu(e, bb))
             self._mix_widget_btn[str(arr)] = b
             self._mix_cells[b] = (cell, fn)
         side = ttk.Frame(self.mix_bar); side.pack(side="left", padx=(10, 0))
@@ -728,8 +753,8 @@ class App:
                                   "drag a slot onto another (or ◀ ▶) = reorder\n"
                                   "Fill: select palette(s), click an empty slot, "
                                   "Shift+click to replace, or press 1-6\n"
-                                  "Right-click a palette for a menu  ·  right-click "
-                                  "a slot = clear",
+                                  "✕ = clear that slot  ·  right-click a slot or a "
+                                  "palette for more",
                                   foreground="#888", font=("Segoe UI", 8))
         self.mix_hint.pack(anchor="w", pady=(2, 0))
         lk = locks.load_locks()
@@ -901,6 +926,25 @@ class App:
             self._mix_goto(btn)
             return
         self._mix_set(btn, fn)
+
+    def _mix_slot_menu(self, event, btn):
+        """Right-click a mix slot: show / replace / clear just that slot."""
+        here = locks.char_locks(self._cur_char).get(btn) if self._cur_char else None
+        sel = self._mix_pick_file()
+        m = tk.Menu(self.root, tearoff=0)
+        if here:
+            m.add_command(label=f"Show {btn} in the gallery", command=lambda: self._mix_goto(btn))
+        if sel and sel != here:
+            m.add_command(label=(f"Replace {btn} with the selected palette" if here else
+                                 f"Put the selected palette in {btn}"),
+                          command=lambda: self._mix_set(btn, sel))
+        if here:
+            m.add_separator()
+            m.add_command(label=f"Clear {btn} (the other slots stay)",
+                          command=lambda: self._mix_set(btn, None))
+        if not m.index("end") and m.index("end") != 0:
+            m.add_command(label="(select a palette first)", state="disabled")
+        m.tk_popup(event.x_root, event.y_root)
 
     def _mix_menu(self, event, fn):
         """Right-click menu on a palette: put it in a mix slot / take it out."""
@@ -1669,7 +1713,7 @@ class App:
 
     # ------------------------------------------------------- lock palettes tab
     def _tab_locks(self, nb):
-        outer = ttk.Frame(nb); nb.add(outer, text="5. Lock Selections")
+        outer = ttk.Frame(nb); nb.add(outer, text="Locks")
         t = ttk.Frame(self._scroll_body(outer), padding=14)
         t.pack(fill="both", expand=True)
         ttk.Label(t, text="Lock palettes to buttons", font=("Segoe UI", 11, "bold")
@@ -2163,7 +2207,7 @@ class App:
     MINI_W = 128
 
     def _tab_stages(self, nb):
-        t = ttk.Frame(nb, padding=10); nb.add(t, text="3. Stage Gallery")
+        t = ttk.Frame(nb, padding=10); nb.add(t, text="Stage Gallery")
         pw = ttk.PanedWindow(t, orient="horizontal")
         pw.pack(fill="both", expand=True)
 
@@ -2367,7 +2411,7 @@ class App:
             for w in self.stg_inner.winfo_children():
                 w.destroy()
             tk.Label(self.stg_inner, text="No stage data yet - run Download / "
-                     "Update on the Setup tab.",
+                     "Update in Settings.",
                      background="#2d2d2d", foreground="#aaa",
                      font=("Segoe UI", 11)).pack(padx=20, pady=20)
         self._stage_built = True
@@ -2866,7 +2910,7 @@ class App:
 
     # ------------------------------------------------------------------- FX tab
     def _tab_fx(self, nb):
-        t = ttk.Frame(nb, padding=10); nb.add(t, text="4. FX")
+        t = ttk.Frame(nb, padding=10); nb.add(t, text="FX")
         self._fx_tab = t
 
         # Top controls: global mode + chaos seed + running summary.
@@ -3825,7 +3869,7 @@ class App:
     def _fx_unprotect(self, folder):
         if not config.has_game():
             messagebox.showerror("Game not found",
-                                 "Set your game folder on the Setup tab first.")
+                                 "Set your game folder in Settings first.")
             return
         if not messagebox.askyesno(
                 "Unlock for randomizing",
@@ -3963,31 +4007,816 @@ class App:
             state += f"  ·  gradient {self.fx_grad_var.get()}"
         self.fx_summary.config(text=f"{on} of {tot} effects on   ·   {state}")
 
-    # --------------------------------------------------------- randomize tab
-    def _tab_randomize(self, nb):
-        t = ttk.Frame(nb, padding=14); nb.add(t, text="1. Randomize")
-        ttk.Label(t, text="Randomize now", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
-                  text="Run a shuffle right now (also happens automatically on "
-                       "launch once auto-randomize is set up)."
+    # ------------------------------------------------------------ arcade tab
+    ARCADE_ORDER = (("random", "Random (every team once before any repeat)"),
+                    ("sequential", "In list order"))
+    # the select screen's slot colours: alpha red, beta green, gamma blue
+    ARCADE_ASSIST_COLORS = {"A": "#c62828", "B": "#2e7d32", "Y": "#1565c0"}
+
+    def _tab_arcade(self, nb):
+        outer = ttk.Frame(nb); nb.add(outer, text="Arcade (WIP)")
+        t = ttk.Frame(self._scroll_body(outer), padding=14)
+        t.pack(fill="both", expand=True)
+        a = randomize.arcade_config()
+        W = self.SETUP_WRAP
+        ttk.Label(t, text="Arcade mode", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        wip = tk.Label(t, justify="left", anchor="w", wraplength=W, bg="#fff3cd",
+                       fg="#6b4e00", padx=10, pady=6, font=("Segoe UI", 9, "bold"),
+                       text="WORK IN PROGRESS - this is an early test version. Expect "
+                            "rough edges and changes between builds, and please report "
+                            "anything that looks wrong.")
+        wip.pack(anchor="w", fill="x", pady=(4, 6))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=W,
+                  text="Makes Arcade mode a real challenge: smarter CPU opponents, "
+                       "real teams, shuffled stages and an endless tower - and the "
+                       "CPU deals and takes full damage (stock MvC2 gives it only "
+                       "75%). Only Arcade mode changes - versus and training play "
+                       "as normal. Turn all of it on or off in the Home tab."
+                  ).pack(anchor="w", pady=(0, 6))
+        self.arc_off_lbl = ttk.Label(t, foreground="#b00020", justify="left", wraplength=W,
+                                     text="Arcade is switched off on the Home tab "
+                                          "- nothing on this tab is used.")
+
+        self.arc_vars = {}
+
+        def chk(parent, key, text, cmd=None, **pk):
+            v = tk.BooleanVar(value=bool(a[key]))
+            self.arc_vars[key] = v
+            ttk.Checkbutton(parent, text=text, variable=v,
+                            command=cmd or (lambda: self._arcade_set(key, bool(v.get())))
+                            ).pack(anchor="w", **pk)
+            return v
+
+        # --- the CPU (a game-file change)
+        self.arc_sec1 = ttk.Label(t, text="Smarter CPU", font=("Segoe UI", 10, "bold"))
+        self.arc_sec1.pack(anchor="w", pady=(6, 0))
+        ttk.Label(t, foreground="#555", justify="left", wraplength=W,
+                  text="Every character's CPU plays with new habits and real combos. "
+                       "This is saved into your game file, so it takes effect on the "
+                       "next Randomize or game launch - or click Apply now (with the "
+                       "game closed). Unchecking it restores the original CPU."
+                  ).pack(anchor="w", pady=(2, 4))
+        row = ttk.Frame(t); row.pack(anchor="w")
+        self.arc_ai_var = tk.BooleanVar(value=bool(a["arcade_ai"]))
+        self.arc_vars["arcade_ai"] = self.arc_ai_var
+        ttk.Checkbutton(row, text="Smarter CPU opponents", variable=self.arc_ai_var,
+                        command=self._arcade_ai_toggle).pack(side="left")
+        b = ttk.Button(row, text="Apply now", command=self._arcade_ai_apply)
+        b.pack(side="left", padx=(14, 0))
+        self._action_widgets.append(b)
+        self.arc_ai_lbl = ttk.Label(t, text="", foreground="#555")
+        self.arc_ai_lbl.pack(anchor="w", pady=(4, 0))
+        prow = ttk.Frame(t); prow.pack(anchor="w", pady=(6, 0))
+        self.arc_pack_lbl = ttk.Label(prow, text="", foreground="#555")
+        self.arc_pack_lbl.pack(side="left")
+        b = ttk.Button(prow, text="Check for CPU pack updates...",
+                       command=self._arcade_pack_check)
+        b.pack(side="left", padx=(12, 0))
+        self._action_widgets.append(b)
+        self.arc_pack_rm = ttk.Button(prow, text="Use built-in pack",
+                                      command=self._arcade_pack_remove)
+        self._arcade_pack_refresh()
+
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=14)
+
+        # --- live (in-memory) features
+        ttk.Label(t, text="While you play", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(t, foreground="#8a5a00", justify="left", wraplength=W,
+                  text="These change the game while it's running, so keep this app "
+                       "open while you play (minimized is fine). If you start the "
+                       "game through Steam with the randomizer launch option, that "
+                       "takes care of it for you (its log goes to "
+                       "data\\arcade_log.txt). Nothing here is saved to your game "
+                       "files."
                   ).pack(anchor="w", pady=(2, 8))
 
-        row = ttk.Frame(t); row.pack(anchor="w", pady=(0, 10))
-        ttk.Label(row, text="Fixed seed (optional):").pack(side="left")
-        ttk.Entry(row, textvariable=self.seed_var, width=14).pack(side="left", padx=(6, 0))
+        ttk.Label(t, text="CPU teams:").pack(anchor="w")
+        self.arc_src_var = tk.StringVar(
+            value=a["arcade_team_source"] if a["arcade_teams"] else "off")
+        for val, lbl in (("off", "The game's own picks (the game repeats the same teams "
+                                 "every run)"),
+                         ("random", "Fully random - any 3 characters with random assists, "
+                                    "new every fight"),
+                         ("lists", "From your team lists:")):
+            ttk.Radiobutton(t, text=lbl, value=val, variable=self.arc_src_var,
+                            command=self._arcade_src_changed).pack(anchor="w", padx=(12, 0))
+        tf = ttk.Frame(t, padding=(36, 0, 0, 4)); tf.pack(anchor="w", fill="x")
+        self.arc_lists_tf = tf
+        self.arc_lists_fr = ttk.Frame(tf); self.arc_lists_fr.pack(anchor="w", pady=(2, 4))
+        r = ttk.Frame(tf); r.pack(anchor="w", pady=(0, 4))
+        ttk.Button(r, text="Edit team lists...", command=self._arcade_edit_lists
+                   ).pack(side="left")
+        ttk.Label(r, text="Order:").pack(side="left", padx=(16, 0))
+        self.arc_order_var = tk.StringVar(
+            value=dict(self.ARCADE_ORDER).get(a["arcade_order"], self.ARCADE_ORDER[0][1]))
+        cb = ttk.Combobox(r, textvariable=self.arc_order_var, state="readonly", width=42,
+                          values=[lbl for _, lbl in self.ARCADE_ORDER])
+        cb.pack(side="left", padx=(6, 0))
+        cb.bind("<<ComboboxSelected>>", lambda e: self._arcade_set(
+            "arcade_order", {v: k for k, v in self.ARCADE_ORDER}[self.arc_order_var.get()]))
+        self.arc_order_cb = cb
 
-        self.scope_lbl = ttk.Label(t, text="", foreground="#555")
-        self.scope_lbl.pack(anchor="w", pady=(0, 8))
-        t.bind("<Map>", lambda e: self._scope_refresh_label(), add="+")
-        self._scope_refresh_label()
+        chk(t, "arcade_endless", "Endless Tower - after fight 7 the tower starts over "
+                                 "with new opponents until you lose (replaces the Abyss "
+                                 "fight)", pady=(8, 0))
+        chk(t, "arcade_stages", "Shuffle stages - every stage comes up once before any "
+                                "of them repeats",
+            pady=(4, 0))
+        chk(t, "arcade_max_rank", "CPU at full strength from the first second (normally "
+                                  "it ramps up over about 2.5 minutes of each fight)",
+            pady=(4, 0))
+        chk(t, "arcade_autostart", "Start automatically when this app opens", pady=(4, 0))
 
-        rrow = ttk.Frame(t); rrow.pack(anchor="w")
+        r = ttk.Frame(t); r.pack(anchor="w", pady=(12, 0))
+        self.arc_btn = ttk.Button(r, text="Start", width=12, command=self._arcade_toggle)
+        self.arc_btn.pack(side="left")
+        self.arc_status_lbl = ttk.Label(r, text="Not running", foreground="#555")
+        self.arc_status_lbl.pack(side="left", padx=(12, 0))
+        ttk.Label(t, foreground="#777", justify="left", wraplength=W,
+                  text="Changes take effect the next time it starts (Stop, then "
+                       "Start). Everything it does is listed in the Logs tab."
+                  ).pack(anchor="w", pady=(6, 0))
+
+        self._arcade_fill_lists()
+        self._arcade_refresh_enabled()
+        t.bind("<Map>", lambda e: (self._arcade_ai_refresh(),
+                                   self._arcade_refresh_enabled()), add="+")
+
+    def _arcade_refresh_enabled(self):
+        """Show the 'switched off in Setup' note when the master switch is off."""
+        if randomize.arcade_config()["arcade_enabled"]:
+            self.arc_off_lbl.pack_forget()
+        else:
+            self.arc_off_lbl.pack(anchor="w", pady=(0, 6), before=self.arc_sec1)
+
+    def _arcade_set(self, key, value):
+        randomize.set_config_key(key, value)
+        if self._arcade_running() and key != "arcade_autostart":
+            self.arc_status_lbl.config(text="Settings changed - Stop / Start to apply",
+                                       foreground="#8a5a00")
+
+    def _arcade_src_changed(self):
+        v = self.arc_src_var.get()
+        if v != "off":
+            randomize.set_config_key("arcade_team_source", v)
+        self._arcade_set("arcade_teams", v != "off")
+        self._arcade_lists_state()
+
+    def _arcade_lists_state(self):
+        """Team-list controls are only live when teams come from the lists."""
+        on = self.arc_src_var.get() == "lists"
+
+        def walk(w):
+            yield w
+            for c in w.winfo_children():
+                yield from walk(c)
+        for w in walk(self.arc_lists_tf):
+            if w is self.arc_lists_tf or isinstance(w, ttk.Frame):
+                continue
+            try:
+                if w is getattr(self, "arc_order_cb", None):
+                    w.config(state="readonly" if on else "disabled")
+                else:
+                    w.state(["!disabled"] if on else ["disabled"])
+            except (tk.TclError, AttributeError):
+                pass
+
+    def _arcade_fill_lists(self):
+        for w in self.arc_lists_fr.winfo_children():
+            w.destroy()
+        lists = randomize.arcade_team_lists()
+        off = set(randomize.arcade_config()["arcade_lists_off"])
+        self.arc_list_vars = {}
+        for i, (name, teams) in enumerate(lists.items()):
+            v = tk.BooleanVar(value=name not in off)
+            self.arc_list_vars[name] = v
+            ttk.Checkbutton(self.arc_lists_fr, text=f"{name} ({len(teams)})", variable=v,
+                            command=self._arcade_lists_changed
+                            ).grid(row=i // 4, column=i % 4, sticky="w", padx=(0, 18))
+        if not lists:
+            ttk.Label(self.arc_lists_fr, text="No team lists - use Edit team lists.",
+                      foreground="#8a5a00").grid(row=0, column=0, sticky="w")
+        self._arcade_lists_changed_state()
+
+    def _arcade_lists_changed_state(self):
+        if getattr(self, "arc_src_var", None) is not None:
+            self._arcade_lists_state()
+
+    def _arcade_lists_changed(self):
+        self._arcade_set("arcade_lists_off",
+                         [n for n, v in self.arc_list_vars.items() if not v.get()])
+
+    # -- smarter CPU (AI pack)
+    def _arcade_ai_toggle(self):
+        on = bool(self.arc_ai_var.get())
+        randomize.set_config_key("arcade_ai", on)
+        self.logln("Arcade (WIP): smarter CPU " + ("on" if on else "off")
+                   + " - takes effect on the next Randomize / launch (or click Apply now).")
+        self._arcade_ai_refresh()
+
+    def _arcade_ai_apply(self):
+        self.run_job("Arcade (WIP): smarter CPU", randomize.arcade_apply_ai,
+                     on_done=self._arcade_ai_refresh)
+
+    # -- CPU pack updates (network only on these button clicks)
+    def _arcade_pack_refresh(self):
+        try:
+            i = randomize.arcade_pack_info()
+        except Exception:
+            return
+        self.arc_pack_lbl.config(text=f"CPU pack: {i['built'] or '?'} ({i['source']})")
+        if i["downloaded"]:
+            self.arc_pack_rm.pack(side="left", padx=(8, 0))
+        else:
+            self.arc_pack_rm.pack_forget()
+
+    def _arcade_pack_check(self):
+        self.arc_pack_lbl.config(text="Checking for a new CPU pack...")
+
+        def work():
+            try:
+                res = randomize.arcade_check_update()
+            except Exception as e:
+                res = {"error": str(e)}
+            self.q.put(("call", lambda: self._arcade_pack_checked(res)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _arcade_pack_checked(self, res):
+        self._arcade_pack_refresh()
+        if res.get("error"):
+            messagebox.showerror("CPU pack", "Couldn't check for a new CPU pack:\n"
+                                 + res["error"])
+            return
+        if not res["newer"]:
+            messagebox.showinfo("CPU pack", f"You have the latest CPU pack ({res['current']}).")
+            return
+        if res["needs_app"]:
+            messagebox.showinfo("CPU pack", f"A newer CPU pack ({res['latest']}) is out, but it "
+                                f"needs {res['needs_app']}. Download the latest app to get it.")
+            return
+        if messagebox.askyesno("CPU pack", "A new CPU pack is available.\n\n"
+                               f"Latest: {res['latest']}\nYou have: {res['current']}\n\n"
+                               f"Download it now ({max(1, res['size'] // 1024)} KB)?"):
+            self.run_job("Downloading the CPU pack", randomize.arcade_download_update,
+                         on_done=lambda: (self._arcade_pack_refresh(), self._arcade_ai_refresh()),
+                         manifest=res["manifest"])
+            self._select_tab("Logs")
+
+    def _arcade_pack_remove(self):
+        b = randomize.arcade_pack_info()["bundled"]
+        if not messagebox.askyesno("CPU pack", f"Remove the downloaded CPU pack and go back to "
+                                   f"the one built into the app ({b})? It takes effect on the "
+                                   "next Randomize or Apply now."):
+            return
+        randomize.arcade_remove_download()
+        self._arcade_pack_refresh()
+        self._arcade_ai_refresh()
+
+    def _arcade_ai_refresh(self):
+        """Read the CPU state of the game file in the background (it's large)."""
+        if getattr(self, "_arc_ai_reading", False):
+            return
+        self._arc_ai_reading = True
+
+        def work():
+            try:
+                st, ver = randomize.arcade_ai_status()
+            except Exception as e:
+                st, ver = f"unavailable ({e})", None
+            self.q.put(("arcade_ai", (st, ver)))      # Tk only on the main thread
+        threading.Thread(target=work, daemon=True).start()
+
+    def _arcade_ai_show(self, st, ver):
+        self._arc_ai_reading = False
+        want = randomize.arcade_ai_wanted()
+        txt = {"installed": "In your game now: smarter CPU",
+               "stock": "In your game now: original CPU",
+               "ours-old": "In your game now: an older smarter-CPU version",
+               "foreign": "In your game now: CPU files changed by another mod - left alone",
+               "no-game": "Game folder not set (Settings)"}.get(st, f"Can't read: {st}")
+        pending = ((want and st in ("stock", "ours-old"))
+                   or (not want and st in ("installed", "ours-old")))
+        if pending:
+            txt += ("   ->   " + ("smarter CPU goes in" if want else "original CPU comes back")
+                    + " on the next Randomize / launch")
+        self.arc_ai_lbl.config(text=f"{txt}      (version {ver or '?'})",
+                               foreground="#8a5a00" if pending or st == "foreign"
+                               else "#555")
+
+    # -- companion
+    def _arcade_log(self, msg):
+        self.q.put(("log", "[Arcade] " + msg.replace("Arcade companion: ", "")))
+
+    def _arcade_running(self):
+        return self._arcade is not None and self._arcade.is_alive()
+
+    def _arcade_toggle(self):
+        if self._arcade_running():
+            self._arcade.stop()
+            self.arc_btn.config(text="Start")
+            self.arc_status_lbl.config(text="Stopping...", foreground="#555")
+            return
+        self._arcade_start()
+
+    def _arcade_start(self, quiet=False):
+        C = randomize.arcade_module()
+        a = randomize.arcade_config()
+        s = randomize.arcade_settings(log=self._arcade_log)
+        if not (s["teams"] or s["stages"] or s["max_rank"] or s["full_dmg"]
+                or s["boss"] == "endless"):
+            if quiet:
+                return
+            if not a["arcade_enabled"]:
+                why = "Arcade is switched off in the Home tab."
+            elif a["arcade_teams"] and not s["pool"]:
+                why = ("Curated teams is on, but the chosen lists have no usable "
+                       "teams. Pick a list or fix it in Edit team lists.")
+            else:
+                why = "Nothing to do - turn on at least one of the options above."
+            messagebox.showinfo("Arcade", why)
+            return
+        self._arcade = C.Companion(
+            s, log=self._arcade_log,
+            status=lambda m: self.q.put(("arcade_status", m)))
+        self._arcade.start()
+        self.arc_btn.config(text="Stop")
+
+    def _arcade_show_status(self, text):
+        if getattr(self, "arc_status_lbl", None) is None:
+            return
+        running = self._arcade_running() and text != "Stopped"
+        good = running and text.startswith(("Attached", "Fight", "Endless"))
+        self.arc_status_lbl.config(text=text, foreground="#2a7a2a" if good else "#555")
+        if not running:
+            self.arc_btn.config(text="Start")
+
+    def _arcade_autostart(self):
+        try:
+            a = randomize.arcade_config()
+            if a["arcade_autostart"] and randomize.arcade_live_features(a):
+                self._arcade_log("starting automatically (Arcade tab setting)")
+                self._arcade_start(quiet=True)
+        except Exception as e:
+            self.logln(f"[Arcade] couldn't start: {e}")
+
+    def _on_close(self):
+        if self._arcade_running():
+            if not messagebox.askyesno(
+                    "Arcade is running",
+                    "Closing the app stops the Arcade features (curated teams, "
+                    "Endless Tower, shuffled stages, full-strength CPU) in a game "
+                    "that's already running.\n\nClose anyway?"):
+                return
+            self._arcade.stop()
+        self.root.destroy()
+
+    # -- team list editor
+    def _arcade_assist_labels(self, C, info, name):
+        """Assist dropdown entries for one character: [(code, label), ...]."""
+        cid = C.NAME2ID.get(C._key(name or ""))
+        rec = info.get(str(cid), {}) if cid is not None else {}
+        types = rec.get("types") or ["", "", ""]
+        out = []
+        for i, code in enumerate(C.ASSISTS):
+            t = types[i] if i < len(types) else ""
+            out.append((code, f"{i + 1} {'αβγ'[i]} {t}".rstrip()))
+        return out
+
+    def _arcade_edit_lists(self):
+        C = randomize.arcade_module()
+        info = randomize.arcade_assist_info()
+        lists = {n: [[list(m) for m in team] if isinstance(team, (list, tuple))
+                     else self._arcade_team_from_text(C, team) for team in teams]
+                 for n, teams in randomize.arcade_team_lists().items()}
+        names = sorted(C.APP_NAMES.values(), key=str.lower)
+        style = ttk.Style()
+        for code, col in self.ARCADE_ASSIST_COLORS.items():
+            style.map(f"Assist{code}.TCombobox", foreground=[("readonly", col)])
+
+        def paint(cb, name, lbl):
+            """Box text in the slot's colour; the open list colour-coded too."""
+            code = label_to_code(name, lbl)
+            cb.configure(style=f"Assist{code}.TCombobox")
+
+        def paint_list(cb, name):
+            try:
+                pd = cb.tk.call("ttk::combobox::PopdownWindow", cb)
+                for i, (code, _) in enumerate(labels_for(name)):
+                    cb.tk.call(f"{pd}.f.l", "itemconfigure", i, "-foreground",
+                               self.ARCADE_ASSIST_COLORS.get(code, "#555555"))
+            except tk.TclError:
+                pass
+
+        def labels_for(name):
+            return self._arcade_assist_labels(C, info, name)
+
+        def code_to_label(name, code):
+            for c, lbl in labels_for(name):
+                if c == (code or "A").upper():          # none given = alpha
+                    return lbl
+            return labels_for(name)[0][1]
+
+        def label_to_code(name, lbl):
+            for c, l_ in labels_for(name):
+                if l_ == lbl:
+                    return c
+            lbl = (lbl or "").strip()          # another character's label: go by 1/2/3
+            return C.ASSISTS[int(lbl[0]) - 1] if lbl[:1] in ("1", "2", "3") else "A"
+
+        def norm(team):
+            """Comparable form: (char id, assist index); no assist = alpha."""
+            out = []
+            for n, a_ in team:
+                a_ = (a_ or "A").upper()
+                out.append((C.NAME2ID.get(C._key(n or "")),
+                            C.ASSISTS.index(a_) if a_ in C.ASSISTS else 0))
+            return tuple(out)
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Arcade team lists")
+        dlg.transient(self.root)
+        dlg.geometry("1100x620")
+        top = ttk.Frame(dlg, padding=10); top.pack(fill="both", expand=True)
+        ttk.Label(top, foreground="#555", justify="left", wraplength=1000,
+                  text="Each team is point, mid and anchor, each with an assist - 1 α "
+                       "(red), 2 β (green) or 3 γ (blue), as on the select screen. The CPU "
+                       "takes one team per fight from the lists ticked on the Arcade tab. "
+                       "The same team can't be in a list twice."
+                  ).pack(anchor="w", pady=(0, 8))
+        br = ttk.Frame(top); br.pack(side="bottom", fill="x", pady=(8, 0))
+        msg = ttk.Label(top, text="", foreground="#555", justify="left", wraplength=1000)
+        msg.pack(side="bottom", anchor="w", pady=(6, 0))
+        body = ttk.Frame(top); body.pack(fill="both", expand=True)
+
+        left = ttk.Frame(body); left.pack(side="left", fill="y")
+        bl = ttk.Frame(left); bl.pack(side="bottom", fill="x", pady=(6, 0))
+        lb = tk.Listbox(left, width=18, exportselection=False, font=("Segoe UI", 10))
+        lb.pack(fill="both", expand=True)
+
+        right = ttk.Frame(body); right.pack(side="left", fill="both", expand=True,
+                                            padx=(8, 0))
+        hdr = ttk.Frame(right); hdr.pack(fill="x")
+        hdr_cells = [ttk.Label(hdr, text="#")]
+        for pos in ("Point", "Mid", "Anchor"):
+            hdr_cells.append(ttk.Label(hdr, text=pos, font=("Segoe UI", 9, "bold")))
+            hdr_cells.append(ttk.Label(hdr, text="Assist", font=("Segoe UI", 9, "bold")))
+        for col, w in enumerate(hdr_cells):
+            w.grid(row=0, column=col, sticky="w")
+        add_btn = ttk.Button(right, text="+ Add team")
+        add_btn.pack(side="bottom", anchor="w", pady=(6, 0))
+        cv = tk.Canvas(right, highlightthickness=0, borderwidth=0)
+        vsb = ttk.Scrollbar(right, orient="vertical", command=cv.yview)
+        cv.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        cv.pack(side="left", fill="both", expand=True)
+        rows_fr = ttk.Frame(cv)
+        cv.create_window((0, 0), window=rows_fr, anchor="nw")
+        rows_fr.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind("<Enter>", lambda e: cv.bind_all(
+            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
+        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        PADS = [(0, 2)] + [(2, 1), (1, 6)] * 3        # (left, right) per column
+
+        cur = {"name": None}
+        rows = []          # ([(char_var, assist_var) x3], warn_label)
+
+        def stash():
+            if cur["name"] is None:
+                return
+            lists[cur["name"]] = [[[c.get(), label_to_code(c.get(), a_.get())]
+                                   for c, a_ in r[0]] for r in rows]
+
+        def row_problem(name, i, team):
+            got = [n for n, _ in team if n]
+            if len(got) < 3:
+                return "pick 3 characters"
+            if len(set(got)) < 3:
+                return "same character twice"
+            key = norm(team)
+            for j, other in enumerate(lists.get(name, [])):
+                if j < i and norm(other) == key:
+                    return f"same team as #{j + 1}"
+            return ""
+
+        def mark_all():
+            stash()
+            for i, r in enumerate(rows):
+                p = row_problem(cur["name"], i, lists[cur["name"]][i])
+                r[1].config(text=("⚠ " + p) if p else "")
+
+        def align_header():
+            """Header columns take the width of the row columns below them."""
+            rows_fr.update_idletasks()
+            for col in range(7):
+                cells = rows_fr.grid_slaves(column=col)
+                w = max([c.winfo_reqwidth() for c in cells] + [hdr_cells[col].winfo_reqwidth()])
+                l_, r_ = PADS[col]
+                hdr.grid_columnconfigure(col, minsize=w + l_ + r_)
+                hdr_cells[col].grid_configure(padx=(l_, r_))
+                rows_fr.grid_columnconfigure(col, minsize=w)
+
+        def on_char(i, k):
+            c, av = rows[i][0][k]
+            vals = [lbl for _, lbl in labels_for(c.get())]
+            rows[i][2][k].config(values=vals)
+            code = label_to_code(prev_names[i][k], av.get())   # keep 1/2/3 choice
+            av.set(code_to_label(c.get(), code))
+            paint(rows[i][2][k], c.get(), av.get())
+            prev_names[i][k] = c.get()
+            mark_all()
+
+        prev_names = []
+
+        def render():
+            for w in rows_fr.winfo_children():
+                w.destroy()
+            rows.clear()
+            prev_names.clear()
+            for i, team in enumerate(lists.get(cur["name"], [])):
+                vars_, acbs, pn = [], [], []
+                ttk.Label(rows_fr, text=str(i + 1)).grid(row=i, column=0, padx=PADS[0])
+                for k in range(3):
+                    n, a_ = (list(team[k]) + ["", ""])[:2] if k < len(team) else ("", "")
+                    c = tk.StringVar(value=n)
+                    av = tk.StringVar(value=code_to_label(n, a_))
+                    cb1 = ttk.Combobox(rows_fr, textvariable=c, values=names, width=15,
+                                       state="readonly")
+                    cb1.grid(row=i, column=1 + 2 * k, padx=PADS[1 + 2 * k], pady=2)
+                    cb1.bind("<<ComboboxSelected>>", lambda e, i=i, k=k: on_char(i, k))
+                    cb2 = ttk.Combobox(rows_fr, textvariable=av, width=13, state="readonly",
+                                       values=[lbl for _, lbl in labels_for(n)])
+                    cb2.grid(row=i, column=2 + 2 * k, padx=PADS[2 + 2 * k], pady=2)
+                    cb2.bind("<<ComboboxSelected>>", lambda e, cb=cb2, c=c, av=av: (
+                        paint(cb, c.get(), av.get()), mark_all()))
+                    cb2.configure(postcommand=lambda cb=cb2, c=c: paint_list(cb, c.get()))
+                    paint(cb2, n, av.get())
+                    vars_.append((c, av)); acbs.append(cb2); pn.append(n)
+                bf = ttk.Frame(rows_fr); bf.grid(row=i, column=7, padx=(4, 0))
+                ttk.Button(bf, text="▲", width=2, command=lambda i=i: move(i, -1)
+                           ).pack(side="left")
+                ttk.Button(bf, text="▼", width=2, command=lambda i=i: move(i, 1)
+                           ).pack(side="left")
+                cp = ttk.Button(bf, text="➜", width=2)
+                cp.configure(command=lambda i=i, b=cp: copy_menu(i, b))
+                cp.pack(side="left", padx=(4, 0))
+                ttk.Button(bf, text="✕", width=2, command=lambda i=i: remove(i)
+                           ).pack(side="left", padx=(4, 0))
+                warn = ttk.Label(rows_fr, text="", foreground="#b00020")
+                warn.grid(row=i, column=8, sticky="w", padx=(6, 0))
+                rows.append((vars_, warn, acbs))
+                prev_names.append(pn)
+            if rows:
+                mark_all()
+            align_header()
+            cv.yview_moveto(0)
+
+        def move(i, d):
+            stash()
+            t_ = lists[cur["name"]]
+            j = i + d
+            if 0 <= j < len(t_):
+                t_[i], t_[j] = t_[j], t_[i]
+                render()
+
+        def remove(i):
+            stash()
+            del lists[cur["name"]][i]
+            render()
+
+        def copy_menu(i, anchor):
+            stash()
+            others = [n for n in lists if n != cur["name"]]
+            m = tk.Menu(dlg, tearoff=0)
+            m.add_command(label=f"Copy team #{i + 1} to:", state="disabled")
+            m.add_separator()
+            if not others:
+                m.add_command(label="(no other lists)", state="disabled")
+            for n in others:
+                m.add_command(label=n, command=lambda n=n: copy_to(i, n))
+            m.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
+
+        def copy_to(i, dest):
+            team = lists[cur["name"]][i]
+            if row_problem(cur["name"], 0, team):        # (index 0: no duplicate check)
+                msg.config(text="Fix the team before copying it.", foreground="#b00020")
+                return
+            key = norm(team)
+            for j, other in enumerate(lists[dest]):
+                if norm(other) == key:
+                    msg.config(text=f"'{dest}' already has that team (#{j + 1}).",
+                               foreground="#b00020")
+                    return
+            lists[dest].append([list(m) for m in team])
+            msg.config(text=f"Copied team #{i + 1} to '{dest}'.", foreground="#2a7a2a")
+
+        def add_team():
+            if cur["name"] is None:
+                return
+            stash()
+            if any(len([n for n, _ in t_ if n]) < 3 for t_ in lists[cur["name"]]):
+                msg.config(text="Finish the empty team first.", foreground="#b00020")
+                return
+            lists[cur["name"]].append([["", "A"], ["", "A"], ["", "A"]])
+            render()
+            cv.update_idletasks()
+            cv.yview_moveto(1.0)
+
+        add_btn.config(command=add_team)
+
+        def show(name):
+            cur["name"] = name
+            msg.config(text="")
+            render()
+
+        def refill(select=None):
+            lb.delete(0, "end")
+            for n in lists:
+                lb.insert("end", f"{n}  ({len(lists[n])})")
+            ns = list(lists)
+            if select in ns:
+                i = ns.index(select)
+                lb.selection_set(i)
+                lb.see(i)
+                show(select)
+            else:
+                cur["name"] = None
+                render()
+
+        def on_pick(e=None):
+            sel = lb.curselection()
+            if sel and list(lists)[sel[0]] != cur["name"]:
+                stash()
+                show(list(lists)[sel[0]])
+
+        def ask_name(title, initial=""):
+            n = simpledialog.askstring(title, "Name:", initialvalue=initial, parent=dlg)
+            n = (n or "").strip()
+            if n and n in lists:
+                messagebox.showinfo(title, f"There's already a list called '{n}'.",
+                                    parent=dlg)
+                return None
+            return n or None
+
+        def new_list():
+            stash()
+            n = ask_name("New team list")
+            if n:
+                lists[n] = []
+                refill(n)
+
+        def duplicate_list():
+            if cur["name"] is None:
+                return
+            stash()
+            n = ask_name("Duplicate team list", cur["name"] + " copy")
+            if n:
+                lists[n] = [[list(m) for m in t_] for t_ in lists[cur["name"]]]
+                refill(n)
+
+        def rename_list():
+            if cur["name"] is None:
+                return
+            stash()
+            old = cur["name"]
+            n = ask_name("Rename team list", old)
+            if not n or n == old:
+                return
+            for k in list(lists):          # rebuild in the same order
+                lists[n if k == old else k] = lists.pop(k)
+            off = randomize.arcade_config()["arcade_lists_off"]
+            if old in off:                 # keep it switched off under the new name
+                randomize.set_config_key("arcade_lists_off",
+                                         [n if x == old else x for x in off])
+            cur["name"] = None
+            refill(n)
+
+        def delete_list():
+            if cur["name"] is None:
+                return
+            if not messagebox.askyesno("Delete team list",
+                                       f"Delete the list '{cur['name']}'?", parent=dlg):
+                return
+            lists.pop(cur["name"], None)
+            cur["name"] = None
+            refill(next(iter(lists), None))
+
+        def save():
+            stash()
+            bad = []
+            for n, teams in lists.items():
+                teams[:] = [t_ for t_ in teams if any(c for c, _ in t_)]  # drop blank rows
+                for i, team in enumerate(teams):
+                    p = row_problem(n, i, team)
+                    if p:
+                        bad.append(f"{n} #{i + 1}: {p}")
+            if bad:
+                msg.config(text="Problems:\n" + "\n".join(bad[:8])
+                           + ("\n..." if len(bad) > 8 else ""), foreground="#b00020")
+                if not messagebox.askyesno(
+                        "Some teams need fixing",
+                        "Those teams will be skipped until they're fixed. Save anyway?",
+                        parent=dlg):
+                    return
+            randomize.arcade_save_team_lists(lists)
+            off = [n for n in randomize.arcade_config()["arcade_lists_off"] if n in lists]
+            randomize.set_config_key("arcade_lists_off", off)
+            self._arcade_fill_lists()
+            self.logln(f"[Arcade] team lists saved ({len(lists)} lists)")
+            if self._arcade_running():
+                self.arc_status_lbl.config(text="Lists changed - Stop / Start to apply",
+                                           foreground="#8a5a00")
+            dlg.destroy()
+
+        lb.bind("<<ListboxSelect>>", on_pick)
+        for k, (txt, fn) in enumerate((("New", new_list), ("Duplicate", duplicate_list),
+                                       ("Rename", rename_list), ("Delete", delete_list))):
+            ttk.Button(bl, text=txt, width=9, command=fn).grid(
+                row=k // 2, column=k % 2, sticky="ew", padx=(0, 3), pady=(0, 3))
+        ttk.Button(br, text="Save", command=save).pack(side="right")
+        ttk.Button(br, text="Cancel", command=dlg.destroy).pack(side="right", padx=6)
+        refill(next(iter(lists), None))
+        # open just wide enough for the rows (and never wider than the screen)
+        dlg.update_idletasks()
+        need = left.winfo_reqwidth() + rows_fr.winfo_reqwidth() + vsb.winfo_reqwidth() + 60
+        dlg.geometry(f"{min(max(need, 900), dlg.winfo_screenwidth() - 60)}x620")
+        dlg.grab_set()
+
+    @staticmethod
+    def _arcade_team_from_text(C, text):
+        """Old 'Point-A, Mid-B, Anchor' text -> [[name, assist], x3] (best effort)."""
+        try:
+            return [[C.APP_NAMES[c], "" if a is None else C.ASSISTS[a]]
+                    for c, a in C.parse_team(text, "team")]
+        except ValueError:
+            return [["", ""], ["", ""], ["", ""]]
+
+    # --------------------------------------------------------------- home tab
+    HOME_ROWS = (("randomize_palettes", "Palettes", "Palette Gallery"),
+                 ("randomize_stages", "Stages", "Stage Gallery"),
+                 ("randomize_fx", "FX colors", "FX"),
+                 ("arcade_enabled", "Arcade (WIP)", "Arcade (WIP)"))
+    BANNER = {"ok": ("#e6f4ea", "#1e6b34"), "warn": ("#fff3cd", "#6b4e00"),
+              "bad": ("#fdecea", "#8a1c1c")}
+
+    def _tab_randomize(self, nb):
+        outer = ttk.Frame(nb); nb.add(outer, text="Home")
+        t = ttk.Frame(self._scroll_body(outer), padding=14)
+        t.pack(fill="both", expand=True)
+        W = self.SETUP_WRAP
+        self.home_banner = tk.Label(t, anchor="w", justify="left", padx=10, pady=7,
+                                    font=("Segoe UI", 10), wraplength=W)
+        self.home_banner.pack(fill="x")
+
+        ttk.Label(t, text="What each Randomize changes", font=("Segoe UI", 11, "bold")
+                  ).pack(anchor="w", pady=(14, 0))
+        ttk.Label(t, foreground="#555", wraplength=W, justify="left",
+                  text="Each Randomize (and each Steam launch with the launch option) "
+                       "changes only what's switched on. Anything switched off stays "
+                       "exactly as it is in your game."
+                  ).pack(anchor="w", pady=(2, 6))
+        grid = ttk.Frame(t); grid.pack(anchor="w", fill="x")
+        cfg0 = randomize.get_config()
+        self.scope_vars, self.home_sum = {}, {}
+        for r, (key, title, tab) in enumerate(self.HOME_ROWS):
+            var = tk.BooleanVar(value=bool(cfg0.get(key, True)))
+            self.scope_vars[key] = var
+            ttk.Checkbutton(grid, text=title, variable=var, width=14,
+                            command=lambda k=key: self._on_scope_toggle(k)
+                            ).grid(row=r, column=0, sticky="w", pady=4)
+            lbl = ttk.Label(grid, text="", foreground="#555", width=78)
+            lbl.grid(row=r, column=1, sticky="w", padx=(6, 10))
+            self.home_sum[key] = lbl
+            ttk.Button(grid, text="Customize", width=10,
+                       command=lambda tb=tab: self._select_tab(tb)
+                       ).grid(row=r, column=2, sticky="e")
+
+        rrow = ttk.Frame(t); rrow.pack(anchor="w", pady=(12, 0))
         r = ttk.Button(rrow, text="Randomize now", command=self.on_randomize)
         r.pack(side="left")
         self._action_widgets.append(r)
         v = ttk.Button(rrow, text="View last run log", command=self.on_view_log)
         v.pack(side="left", padx=(8, 0))
         self._action_widgets.append(v)
+        ttk.Label(rrow, text="Seed (optional):").pack(side="left", padx=(18, 4))
+        ttk.Entry(rrow, textvariable=self.seed_var, width=10).pack(side="left")
+        self.home_last_lbl = ttk.Label(t, text="", foreground="#777")
+        self.home_last_lbl.pack(anchor="w", pady=(4, 0))
+        self.scope_lbl = None
+
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=14)
+        ttk.Label(t, text="Your game", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        self.home_game_lbl = ttk.Label(t, text="Checking your game file...",
+                                       foreground="#555", justify="left", wraplength=W)
+        self.home_game_lbl.pack(anchor="w", pady=(2, 6))
+        grow = ttk.Frame(t); grow.pack(anchor="w")
+        b = ttk.Button(grow, text="Restore...", command=self.on_restore)
+        b.pack(side="left")
+        self._action_widgets.append(b)
+        b = ttk.Button(grow, text="Check again", command=lambda: self._home_check(force=True))
+        b.pack(side="left", padx=(8, 0))
+        self._action_widgets.append(b)
+        t.bind("<Map>", lambda e: self._home_refresh(), add="+")
+        self.root.after(300, self._home_check)
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=14)
         ttk.Label(t, text="Export game file (game_50.arc)",
@@ -3998,7 +4827,7 @@ class App:
                        "who just wants to drop it in (no app needed). Lock your "
                        "palette picks, stages and FX first so it's your exact "
                        "setup. (To share your choices, locks and playlists "
-                       "instead, use Setup > Curated mixes.)"
+                       "instead, use Settings > Curated mixes.)"
                   ).pack(anchor="w", pady=(2, 6))
         self.mix_sum_lbl = ttk.Label(t, text="", foreground="#333", justify="left",
                                      wraplength=self.SETUP_WRAP)
@@ -4098,7 +4927,7 @@ class App:
         p = self._current_preset()
         if not p:
             messagebox.showinfo("No mix selected",
-                                "Download the gallery first (Setup tab) - "
+                                "Download the gallery first (Settings) - "
                                 "curated mixes come with it.")
             return
         if mode == "replace":
@@ -4167,11 +4996,395 @@ class App:
         self.logln(f"Exported curated mix \"{name}\": {what} -> {out}")
         messagebox.showinfo(
             "Curated mix exported",
-            f"Saved {what}.\n\nOthers apply it from Setup > Curated mixes (put "
+            f"Saved {what}.\n\nOthers apply it from Settings > Curated mixes (put "
             f"the file in their presets/ folder, or submit it to the mvc2-skins "
             f"repo's presets/ folder so it ships with the gallery).")
 
     # ------------------------------------------------------------- status
+    # ------------------------------------------------------ home: refreshing
+    def _home_refresh(self):
+        """Update the Home rows, banner and last-run line from the settings."""
+        if getattr(self, "home_banner", None) is None:
+            return
+        cfg = randomize.get_config()
+        try:
+            ms = randomize.mix_summary()
+        except Exception:
+            ms = {}
+        on = {k: bool(cfg.get(k, True)) for k, _, _ in self.HOME_ROWS}
+        for k, var in self.scope_vars.items():
+            var.set(on[k])
+        # palettes
+        if on["randomize_palettes"]:
+            n = ms.get("chars_full", 0)
+            txt = "New colors on each Randomize" + (
+                f" · {n} characters fully locked to your picks" if n else "")
+        else:
+            txt = "Off: palettes stay exactly as they are in your game"
+        self.home_sum["randomize_palettes"].config(text=txt)
+        # stages
+        if on["randomize_stages"]:
+            pl = cfg.get("stage_playlist")
+            nl = ms.get("stages_locked", 0)
+            txt = "New stages on each Randomize" + (f" · playlist '{pl}'" if pl else "") + (
+                f" · {nl} slots locked" if nl else "")
+        else:
+            txt = "Off: your stage files stay exactly as they are"
+        self.home_sum["randomize_stages"].config(text=txt)
+        # fx
+        if on["randomize_fx"]:
+            mode = cfg.get("fx_mode", "Default")
+            locks_n = ms.get("fx_locks", 0)
+            disp = self._fx_disp(mode) if hasattr(self, "_fx_disp") else mode
+            if mode == "Default":
+                txt = "Mode off" + (f" · {locks_n} locked effects still recolored"
+                                    if locks_n else " · effects keep the skin's colors")
+            else:
+                txt = f"Mode {disp}" + (f" · {locks_n} locked effects" if locks_n else "")
+        else:
+            txt = "Off: effect colors stay exactly as they are"
+        self.home_sum["randomize_fx"].config(text=txt)
+        # arcade
+        if on["arcade_enabled"]:
+            a = randomize.arcade_config()
+            parts = []
+            if a["arcade_ai"]:
+                parts.append("Smarter CPU")
+            if randomize.arcade_live_features(a):
+                parts.append("companion " + ("running" if self._arcade_running()
+                                              else "not running - keep this app open"))
+            txt = " · ".join(parts) if parts else "On, but every Arcade option is off"
+        else:
+            txt = "Off: Arcade plays like the original game"
+        self.home_sum["arcade_enabled"].config(text=txt)
+        # last run
+        try:
+            import time as _t
+            mt = os.path.getmtime(config.LAST_RUN)
+            self.home_last_lbl.config(text="Last Randomize: " + _t.strftime(
+                "%Y-%m-%d %H:%M", _t.localtime(mt)))
+        except OSError:
+            self.home_last_lbl.config(text="Not randomized yet")
+        self._home_banner()
+
+    def _home_banner(self):
+        if not config.has_game():
+            kind, txt = "bad", ("Game not found. Set your game folder in Settings, "
+                                "then come back here.")
+        elif not any(v.get() for v in self.scope_vars.values()):
+            kind, txt = "warn", ("Everything is switched off, so Randomize won't change "
+                                 "your game. Switch on what you want below.")
+        elif not randomize.backup_info():
+            kind, txt = "warn", ("No backup of your game file yet - one is made "
+                                 "automatically before the first change.")
+        else:
+            kind, txt = "ok", ("Ready. Click Randomize now, or launch the game through "
+                               "Steam with the launch option (Settings) to randomize "
+                               "every time you play.")
+        bg, fg = self.BANNER[kind]
+        self.home_banner.config(text=txt, bg=bg, fg=fg)
+
+    def _home_check(self, force=False):
+        """Check the game file against stock in the background."""
+        if getattr(self, "_home_checking", False) or not config.has_game():
+            if not config.has_game() and getattr(self, "home_game_lbl", None):
+                self.home_game_lbl.config(text="Game not found.")
+            return
+        self._home_checking = True
+        if force:
+            self.home_game_lbl.config(text="Checking your game file...")
+
+        def work():
+            try:
+                rep = randomize.check_game()
+            except Exception as e:
+                rep = {"error": str(e)}
+            self.q.put(("home_check", rep))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _home_show_check(self, rep):
+        self._home_checking = False
+        if not rep or rep.get("error"):
+            self.home_game_lbl.config(text="Couldn't read your game file"
+                                      + (f": {rep['error']}" if rep else "."))
+            return
+        from mvc2_data import gamecheck as G
+        lines = [v for _, v in G.summary_lines(rep) if v]
+        b = randomize.backup_info()
+        head = ("Matches the stock Steam game." if rep.get("stock") else
+                "Different from the stock Steam game:")
+        txt = head + "".join("\n   •  " + ln for ln in lines)
+        if rep.get("other"):
+            txt += ("\n   Other changed files come from another tool. If the game "
+                    "glitches or crashes, verify the game files in Steam.")
+        txt += "\n" + (f"Backup of your original game file: {b['date']}." if b else
+                       "No backup yet - one is made before the first change.")
+        self.home_game_lbl.config(text=txt)
+        self._home_banner()
+
+    # ---------------------------------------------------------------- restore
+    def on_restore(self):
+        if not config.has_game():
+            messagebox.showerror("Game not found", "Set your game folder in Settings first.")
+            return
+        b = randomize.backup_info()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Restore")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        f = ttk.Frame(dlg, padding=16); f.pack(fill="both", expand=True)
+        ttk.Label(f, text="Put your game back", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        choice = tk.StringVar(value="original" if b else "stock")
+        W = 560
+        part_vars = {}
+
+        def sync():
+            st = "readonly" if choice.get() == "parts" else "disabled"
+            for v, cb in part_vars.values():
+                cb.config(state=st)
+
+        def opt(val, title, desc, state="normal"):
+            fr = ttk.Frame(f); fr.pack(anchor="w", fill="x", pady=(10, 0))
+            ttk.Radiobutton(fr, text=title, value=val, variable=choice, state=state,
+                            command=sync).pack(anchor="w")
+            ttk.Label(fr, text=desc, foreground="#555", wraplength=W, justify="left"
+                      ).pack(anchor="w", padx=(22, 0))
+
+        opt("original", "Your original game file",
+            (f"Exactly as it was on {b['date']}, when the randomizer first saw it - "
+             "including any mods you had." if b else
+             "No backup yet - it's made the first time the randomizer changes your game."),
+            "normal" if b else "disabled")
+        opt("stock", "Stock",
+            "Palettes, FX colors, stages and CPU back to the Steam originals. Files changed "
+            "by other tools aren't touched - verify the game files in Steam for those.")
+        opt("parts", "Just some parts", "Pick each part below.")
+        pf = ttk.Frame(f, padding=(22, 4, 0, 0)); pf.pack(anchor="w")
+        vals = ["Leave as is", "Stock"] + (["Your original"] if b else [])
+        for i, (k, name) in enumerate((("palettes", "Palettes"), ("fx", "FX colors"),
+                                       ("stages", "Stages"), ("cpu", "CPU behavior"))):
+            ttk.Label(pf, text=name, width=14).grid(row=i, column=0, sticky="w", pady=2)
+            v = tk.StringVar(value="Leave as is")
+            cb = ttk.Combobox(pf, textvariable=v, values=vals, state="disabled", width=16)
+            cb.grid(row=i, column=1, sticky="w", pady=2)
+            part_vars[k] = (v, cb)
+        ttk.Label(f, foreground="#555", wraplength=W, justify="left",
+                  text="Randomizing is switched off for whatever you restore, so the "
+                       "next launch doesn't change it again. Close the game first."
+                  ).pack(anchor="w", pady=(12, 0))
+
+        sync()
+
+        def go():
+            c = choice.get()
+            if c == "original":
+                parts = {"all": "original"}
+            elif c == "stock":
+                parts = {k: "stock" for k in part_vars}
+            else:
+                m = {"Stock": "stock", "Your original": "original"}
+                parts = {k: m[v.get()] for k, (v, _) in part_vars.items() if v.get() in m}
+                if not parts:
+                    messagebox.showinfo("Restore", "Pick at least one part.", parent=dlg)
+                    return
+            dlg.destroy()
+            self.run_job("Restoring your game", randomize.restore,
+                         on_done=self._after_restore, parts=parts)
+
+        br = ttk.Frame(f); br.pack(fill="x", pady=(14, 0))
+        ttk.Button(br, text="Restore", command=go).pack(side="right")
+        ttk.Button(br, text="Cancel", command=dlg.destroy).pack(side="right", padx=6)
+        dlg.grab_set()
+
+    def _after_restore(self):
+        for k, var in self.scope_vars.items():
+            var.set(bool(randomize.get_config().get(k, True)))
+        if hasattr(self, "arc_ai_var"):
+            self.arc_ai_var.set(bool(randomize.arcade_config()["arcade_ai"]))
+        self._home_refresh()
+        self._home_check(force=True)
+
+    # ------------------------------------------------------------ first run
+    def _maybe_first_run(self):
+        if randomize.get_config().get("first_run_done"):
+            return
+        try:
+            self._first_run()
+        except Exception as e:
+            activity.error("first-run setup", e)
+
+    def _first_run(self, existing=None):
+        if existing is None:
+            existing = self._had_config
+        activity.log(f"first-run setup opened ({'existing' if existing else 'new'} user)")
+        if not existing:              # brand-new users start with everything off
+            for k, _, _ in self.HOME_ROWS:
+                randomize.set_config_key(k, False)
+                self.scope_vars[k].set(False)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Set up the MvC2 Randomizer")
+        dlg.transient(self.root)
+        dlg.geometry("720x560")
+        box = ttk.Frame(dlg, padding=18); box.pack(fill="both", expand=True)
+        steps = ttk.Label(box, text="", foreground="#555"); steps.pack(anchor="w")
+        body = ttk.Frame(box); body.pack(fill="both", expand=True, pady=(10, 0))
+        nav = ttk.Frame(box); nav.pack(fill="x", pady=(10, 0))
+        back = ttk.Button(nav, text="Back"); nxt = ttk.Button(nav, text="Next")
+        nxt.pack(side="right"); back.pack(side="right", padx=6)
+        state = {"step": 0}
+        W = 660
+
+        def clear():
+            for w in body.winfo_children():
+                w.destroy()
+
+        def step_game():
+            clear()
+            ttk.Label(body, text="Your game", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+            if not config.has_game():
+                ttk.Label(body, foreground="#b00", wraplength=W, justify="left",
+                          text="The game wasn't found automatically. Point the randomizer "
+                               "at your MARVEL vs. CAPCOM Fighting Collection folder."
+                          ).pack(anchor="w", pady=(6, 6))
+                ttk.Button(body, text="Choose game folder...",
+                           command=lambda: (self.on_set_game(), step_game())
+                           ).pack(anchor="w")
+                nxt.config(state="disabled")
+                return
+            nxt.config(state="normal")
+            msg = ttk.Label(body, text="Backing up your game file and checking it...",
+                            foreground="#555", wraplength=W, justify="left")
+            msg.pack(anchor="w", pady=(6, 0))
+            res = ttk.Label(body, text="", wraplength=W, justify="left")
+            res.pack(anchor="w", pady=(8, 0))
+
+            def work():
+                info = randomize.ensure_backup()
+                rep = randomize.check_game()
+                self.q.put(("call", lambda: show(info, rep)))
+
+            def show(info, rep):
+                if not msg.winfo_exists():
+                    return
+                from mvc2_data import gamecheck as G
+                msg.config(text=(f"Backed up your game file as it is now ({info['size'] // 2**20} MB, "
+                                 f"{info['date']}). You can always go back to it from Home > "
+                                 "Restore." if info else "Couldn't back up the game file - see "
+                                 "the Logs tab."),
+                           foreground="#1e6b34" if info else "#b00")
+                if not rep:
+                    res.config(text="Couldn't read the game file.")
+                    return
+                lines = [v for _, v in G.summary_lines(rep) if v]
+                if rep.get("stock"):
+                    res.config(text="Your game matches the stock Steam game.")
+                else:
+                    res.config(text="Your game is already modded. Compared with the stock "
+                                    "Steam game, these parts are different:\n"
+                               + "".join("\n   •  " + ln for ln in lines)
+                               + "\n\nNothing changes until you switch something on. Parts "
+                                 "you leave off stay exactly as they are.")
+            threading.Thread(target=work, daemon=True).start()
+
+        def step_choose():
+            clear()
+            ttk.Label(body, text="What should the randomizer change?",
+                      font=("Segoe UI", 12, "bold")).pack(anchor="w")
+            ttk.Label(body, foreground="#555", wraplength=W, justify="left",
+                      text="You can change this any time on the Home tab."
+                      ).pack(anchor="w", pady=(2, 10))
+            desc = {"randomize_palettes": "Character colors from the community gallery "
+                                          "(needs the gallery download)",
+                    "randomize_stages": "Stages from the gallery (needs the gallery "
+                                        "download, about 750 MB with palettes)",
+                    "randomize_fx": "Recolors effects (fireballs, beams ...) to match",
+                    "arcade_enabled": "Work in progress: smarter CPU, curated teams, "
+                                      "Endless Tower - changes the CPU"}
+            for k, title, _ in self.HOME_ROWS:
+                ttk.Checkbutton(body, text=title, variable=self.scope_vars[k],
+                                command=lambda k=k: self._on_scope_toggle(k)
+                                ).pack(anchor="w", pady=(4, 0))
+                ttk.Label(body, text=desc[k], foreground="#555").pack(anchor="w", padx=(22, 0))
+
+        def step_launch():
+            clear()
+            ttk.Label(body, text="How it runs", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+            ttk.Label(body, wraplength=W, justify="left",
+                      text="Two ways to use it:\n\n"
+                           "1.  Every launch (recommended): add the launch option to Steam. "
+                           "Each time you start the game from Steam, the randomizer applies "
+                           "your settings first - and runs the Arcade features while you "
+                           "play.\n\n"
+                           "2.  By hand: click Randomize now on the Home tab, then start the "
+                           "game. For the Arcade features, keep this app open while you play."
+                      ).pack(anchor="w", pady=(6, 10))
+            ttk.Button(body, text="Copy the Steam launch option...",
+                       command=self.on_enable_steam).pack(anchor="w")
+            ttk.Label(body, foreground="#555", wraplength=W, justify="left",
+                      text="\nIf a gallery part is switched on, download the gallery next "
+                           "(Settings > Download / Update gallery content)."
+                      ).pack(anchor="w")
+
+        pages = [("1 Your game", step_game), ("2 What to change", step_choose),
+                 ("3 How it runs", step_launch)]
+
+        def show_step():
+            i = state["step"]
+            steps.config(text="     ".join(("» " if j == i else "") + n
+                                           for j, (n, _) in enumerate(pages)))
+            pages[i][1]()
+            back.config(state="normal" if i else "disabled")
+            nxt.config(text="Finish" if i == len(pages) - 1 else "Next")
+
+        def go(d):
+            i = state["step"] + d
+            if i >= len(pages):
+                randomize.set_config_key("first_run_done", True)
+                activity.log("first-run setup finished")
+                dlg.destroy()
+                self._home_refresh()
+                self._home_check(force=True)
+                return
+            state["step"] = max(0, i)
+            show_step()
+
+        back.config(command=lambda: go(-1))
+        nxt.config(command=lambda: go(1))
+        dlg.protocol("WM_DELETE_WINDOW", lambda: (randomize.set_config_key(
+            "first_run_done", True), dlg.destroy(), self._home_refresh()))
+        show_step()
+        dlg.grab_set()
+
+    # ---------------------------------------------------------- support info
+    def on_support_info(self):
+        import time as _t
+        dest = filedialog.asksaveasfilename(
+            title="Save support info", defaultextension=".zip",
+            initialfile=f"mvc2-randomizer-support-{_t.strftime('%Y%m%d-%H%M')}.zip",
+            filetypes=[("Zip file", "*.zip")])
+        if not dest:
+            return
+        try:
+            randomize.support_bundle(dest)
+            messagebox.showinfo("Support info saved",
+                                f"Saved to:\n{dest}\n\nSend this file to the developer. It "
+                                "has your settings and logs - not your game file.")
+        except Exception as e:
+            activity.error("support info", e)
+            messagebox.showerror("Couldn't save support info", str(e))
+
+    def _report_callback_exception(self, exc, val, tb):
+        """Any unhandled error in a button/handler: log it with its traceback."""
+        import traceback as _tb
+        activity.log("ERROR (unhandled):\n" + "".join(_tb.format_exception(exc, val, tb)))
+        try:
+            self.logln(f"\nERROR: {val}  (details in data\\activity_log.txt)")
+        except Exception:
+            pass
+        messagebox.showerror("Something went wrong",
+                             f"{val}\n\nDetails were saved to the activity log. Settings > "
+                             "Save support info collects it for sending.")
+
     def refresh_status(self):
         root = config.game_root()
         arc = config.game_arc(root)
@@ -4195,13 +5408,14 @@ class App:
         self._refresh_protected()
         n = config.skins_count()
         if config.has_game() and n:
-            self.status_lbl.config(text="Ready. Set up auto-randomize on the Setup tab.",
+            self.status_lbl.config(text="Ready. See the Home tab.",
                                    foreground="#177245")
         else:
-            self.status_lbl.config(text="Setup needed - check the Setup and Palettes tabs.",
+            self.status_lbl.config(text="Setup needed - check the Home and Settings tabs.",
                                    foreground="#b00")
 
     def logln(self, msg=""):
+        activity.log(msg, "log")
         self.log.config(state="normal")
         self.log.insert("end", str(msg) + "\n")
         self.log.see("end")
@@ -4223,6 +5437,7 @@ class App:
         if self.busy:
             return
         self._job_on_done = on_done
+        activity.log(f"job started: {title}")
         self.logln("\n" + "=" * 56)
         self.logln(title)
         self.logln("=" * 56)
@@ -4240,6 +5455,7 @@ class App:
                     return
                 self.q.put(("done", None))
             except Exception as e:
+                activity.error(f"job {title}", e)
                 self.q.put(("log", "\nERROR: " + str(e)))
                 self.q.put(("log", traceback.format_exc()))
                 self.q.put(("fail", str(e)))
@@ -4262,6 +5478,14 @@ class App:
                     if cb:
                         cb()
                     self.refresh_status()
+                elif kind == "arcade_status":
+                    self._arcade_show_status(payload)
+                elif kind == "home_check":
+                    self._home_show_check(payload)
+                elif kind == "call":
+                    payload()
+                elif kind == "arcade_ai":
+                    self._arcade_ai_show(*payload)
                 elif kind == "fail":
                     self._set_busy(False)
                     messagebox.showerror("Something went wrong", payload)
@@ -4311,9 +5535,15 @@ class App:
         on = bool(self.scope_vars[key].get())
         randomize.set_config_key(key, on)
         name = {"randomize_palettes": "Palettes", "randomize_stages": "Stages",
-                "randomize_fx": "FX"}[key]
+                "randomize_fx": "FX", "arcade_enabled": "Arcade (WIP)"}[key]
+        if key == "arcade_enabled":
+            if not on and self._arcade_running():
+                self._arcade.stop()
+            self._arcade_refresh_enabled()
         self.logln(f"Randomize scope: {name} {'on' if on else 'off'}"
-                   + ("" if on else " (left as it is in your game)") + ".")
+                   + ("" if on else " (original CPU comes back on the next Randomize)"
+                      if key == "arcade_enabled" else
+                      " (left as it is in your game)") + ".")
         self._scope_refresh_label()
 
     def _scope_refresh_label(self):
@@ -4321,13 +5551,15 @@ class App:
         cfg = randomize.get_config()
         parts = [n for k, n in (("randomize_palettes", "palettes"),
                                 ("randomize_stages", "stages"),
-                                ("randomize_fx", "FX"))
+                                ("randomize_fx", "FX"),
+                                ("arcade_enabled", "Arcade (WIP)"))
                  if cfg.get(k, True)]
+        self._home_refresh()
         if getattr(self, "scope_lbl", None) is not None:
             self.scope_lbl.config(
                 text=("Randomizing: " + ", ".join(parts) if parts else
                       "Nothing selected to randomize")
-                     + "   (change in Setup > Randomization scope)")
+                     + "   ")
 
     def on_download(self):
         if not messagebox.askyesno(
@@ -4342,7 +5574,7 @@ class App:
         self._select_tab("Logs")         # watch progress; "Done." marks the end
 
     def _select_tab(self, suffix):
-        """Switch the notebook to the tab whose title ends with `suffix`."""
+        """Switch the notebook to the tab whose title is (or ends with) `suffix`."""
         for tab in self.nb.tabs():
             if self.nb.tab(tab, "text").endswith(suffix):
                 self.nb.select(tab)
@@ -4362,7 +5594,7 @@ class App:
                     f"{p['author']} ({p['keeps']:,} hand-picked palettes).\n\n"
                     "Apply it now so you don't have to review thousands of "
                     "palettes yourself? (You can change any of it later, or "
-                    "apply a different mix from the Setup tab.)"):
+                    "apply a different mix from Settings.)"):
                 result = presets.apply_preset(p["path"], "replace")
                 self.logln(f"Applied mix \"{result['name']}\": "
                            f"{result['palettes']:,} palette verdicts.")
@@ -4402,7 +5634,7 @@ class App:
     def on_export_mix(self):
         if not config.has_game():
             messagebox.showerror("Game not found",
-                                 "Set your game folder on the Setup tab first.")
+                                 "Set your game folder in Settings first.")
             return
         s = randomize.mix_summary()
         if s["stale"]:
@@ -4503,7 +5735,7 @@ class App:
     def on_randomize(self):
         if not config.has_game():
             messagebox.showerror("Game not found",
-                                 "Set your game folder on the Setup tab first.")
+                                 "Set your game folder in Settings first.")
             return
         seed = self.seed_var.get().strip()
         kwargs = {}
@@ -4524,7 +5756,7 @@ class App:
     def on_reset(self):
         if not config.has_game():
             messagebox.showerror("Game not found",
-                                 "Set your game folder on the Setup tab first.")
+                                 "Set your game folder in Settings first.")
             return
         char = self._reset_selection()
         who = char or "every character"
@@ -4539,7 +5771,7 @@ class App:
     def on_unprotect(self):
         if not config.has_game():
             messagebox.showerror("Game not found",
-                                 "Set your game folder on the Setup tab first.")
+                                 "Set your game folder in Settings first.")
             return
         prot, _ = randomize.protected_chars()
         if not prot:
@@ -4587,7 +5819,7 @@ class App:
             "with PalMod), so they were NOT randomized:\n\n"
             f"  {', '.join(sorted(fresh))}\n\n"
             "Your work is protected. To include a character again, use the\n"
-            "Randomize tab: reset it to vanilla, or unlock it to let the\n"
+            "Home tab: reset it to vanilla, or unlock it to let the\n"
             "randomizer overwrite it.")
 
 
@@ -4599,15 +5831,18 @@ def _launch_mode(cmd):
         config.migrate_state()                  # honor pre-1.0.3 verdicts
     except Exception:
         pass
+    activity.session_start("Steam launch")
     try:
         randomize.randomize(progress=None)      # silent; never block the game
-    except BaseException:                        # incl. SystemExit: game must launch
+    except BaseException as e:                   # incl. SystemExit: game must launch
+        activity.error("Steam launch randomize", e)
         try:
             import traceback
             with open(os.path.join(config.STATE, "launch_error.txt"), "w") as _f:
                 traceback.print_exc(file=_f)
         except Exception:
             pass
+    companion = _launch_companion()
     try:
         # Explicit null stdio: we run windowed (no console), and a console
         # child inheriting our invalid handles can hang waiting on stdin.
@@ -4616,6 +5851,35 @@ def _launch_mode(cmd):
                                stderr=subprocess.DEVNULL)
     except Exception:
         return 0
+    finally:
+        activity.log("game closed - launcher exiting")
+        if companion:
+            companion.stop()
+            companion.join(5)
+
+
+def _launch_companion():
+    """Steam-launcher runs: start the Arcade companion for this game session
+    (we stay alive until the game exits anyway). Logs to data/arcade_log.txt.
+    Never stands in the way of the game launching."""
+    try:
+        if not randomize.arcade_live_features():
+            return None
+        import time
+        logf = open(config.ARCADE_LOG, "w", encoding="utf-8", buffering=1)
+
+        def log(m):
+            activity.log(m, "arcade")
+            try:
+                logf.write(time.strftime("%H:%M:%S ") + m + "\n")
+            except Exception:
+                pass
+        s = randomize.arcade_settings(log=log)
+        c = randomize.arcade_module().Companion(s, log=log)
+        c.start()
+        return c
+    except Exception:
+        return None
 
 
 def main():
@@ -4634,7 +5898,7 @@ def main():
     try:
         style = ttk.Style()
         style.theme_use("vista")
-        # space the notebook tabs out so "5. Logs" / "6. Setup" read as separate
+        # space the notebook tabs out so the numbered tabs read as separate
         style.configure("TNotebook", tabmargins=(4, 4, 4, 0))
         style.configure("TNotebook.Tab", padding=(14, 5))
     except tk.TclError:

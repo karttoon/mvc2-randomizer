@@ -33,11 +33,12 @@ from PIL import Image
 from mvc2_data.characters import (
     CHARACTERS, BUTTON_NAMES, PLAYABLE_CHARS,
     EXTRA_BODY_BUTTON_SLOTS, EXTRAS_BODY_ENTRIES, EXTRAS_SLOT_ENTRIES,
+    NON_TRAIL_SLOTS,
     palette_rows, palette_slot_map, safe_name,
 )
 from mvc2_data.steam import (
     read_arc, write_arc, validate_rom,
-    read_palette, write_palette, write_palette_at,
+    read_palette, write_palette, write_palette_at, palette_offset,
     adjust_luminance, TOTAL_PALETTE_COUNT, STEAM_PALETTE_OFFSETS,
     load_vanilla_palettes,
 )
@@ -75,6 +76,9 @@ FX_LOCKS = os.path.join(STATE_DIR, "fx_locks.json")
 # Record of the ROM entries the last FX run wrote ({uid: [entry,...]}), so the
 # next run can revert them to vanilla before re-applying (or leaving FX off).
 FX_APPLIED = os.path.join(STATE_DIR, "fx_applied.json")
+# Which Arcade AI files this tool installed ({afs_idx: md5}), so a newer pack
+# version replaces ours instead of being mistaken for another mod.
+ARCADE_AI_STATE = os.path.join(STATE_DIR, "arcade_ai_installed.json")
 ARC_FILENAME = "game_50.arc"
 ARC_SUBPATH = os.path.join("arc", "pc", ARC_FILENAME)
 
@@ -385,12 +389,34 @@ def assign_skins(png_files, num_buttons=6):
     return pool[:num_buttons]
 
 
+_VANILLA = None
+
+
+def _restore_stock_slot(rom, char_id, button_idx, slot):
+    """Write the stock colors back into one per-button slot (undoes older
+    versions that copied the body palette over an effect there)."""
+    global _VANILLA
+    if _VANILLA is None:
+        try:
+            _VANILLA = load_vanilla_palettes()
+        except Exception:
+            _VANILLA = {}
+    block = _VANILLA.get(char_id)
+    if not block:
+        return
+    e = (button_idx * 8 + slot) * 32
+    off = palette_offset(char_id, button_idx, slot)
+    rom[off:off + 32] = block[e:e + 32]
+
+
 def apply_skin(rom, char_id, button_idx, skin_path):
     """Read a skin PNG and write its palette(s) into the ROM.
 
     Writes the mapped palette rows (body slot 0 + accessory slots for
     multi-row characters) plus super trail slots 6-7 with the body palette.
-    Does not touch projectile/effect slots 1-5 or status effects.
+    Where 6-7 are real effects instead of trails (NON_TRAIL_SLOTS, e.g. Ruby
+    Heart's barrel) they're set back to stock. Does not touch projectile/effect
+    slots 1-5 or status effects.
     """
     colors = extract_png_palette(skin_path)
     if not colors:
@@ -418,7 +444,11 @@ def apply_skin(rom, char_id, button_idx, skin_path):
     # Write body palette to super trail slots (6-7) if not already used
     # These are "A-Groove/Super trail light/dark" — used for afterimages
     for trail_slot in (6, 7):
-        if trail_slot not in slot_map:
+        if trail_slot in slot_map:
+            continue
+        if trail_slot in NON_TRAIL_SLOTS.get(char_id, ()):
+            _restore_stock_slot(rom, char_id, button_idx, trail_slot)
+        else:
             write_palette(rom, char_id, button_idx, trail_slot, body_colors)
 
     # Write body palette to character-specific extra body slots
@@ -805,6 +835,19 @@ def is_pipeline_port(pol_path):
         return False
 
 
+def port_as_is(p, stock_pol, stock_tex):
+    """(pol, tex) of a port that fits this slot without a repack, else None.
+    Repacking breaks tiled textures (CPS2_StageRE notes/30), so a port that
+    already fits is merged as it is."""
+    try:
+        from mvc2_data import stagemerge
+        pol = open(p["pol"], "rb").read()
+        tex = open(p["tex"], "rb").read()
+    except Exception:
+        return None
+    return (pol, tex) if stagemerge.raw_fits(pol, tex, stock_pol, stock_tex) else None
+
+
 def repacked_port(pol_path, tex_path, cache_dir, max_tex=None):
     """Return a port's repacked (pol, tex) bytes, caching on disk by content
     hash (repack is the deterministic, numpy-heavy step). max_tex folds the
@@ -816,7 +859,9 @@ def repacked_port(pol_path, tex_path, cache_dir, max_tex=None):
         raw_tex = open(tex_path, "rb").read()
     except OSError:
         return None
-    h = hashlib.md5(raw_pol + raw_tex).hexdigest()[:16]
+    # "r2": repack keeps tiled textures native since 2026-10-23 - older cached
+    # results (tiled floors packed into atlases) must not be reused
+    h = hashlib.md5(b"r2" + raw_pol + raw_tex).hexdigest()[:16]
     suffix = f".t{max_tex}" if max_tex else ""       # per record-limit cache
     cp = os.path.join(cache_dir, h + suffix + ".pol")
     ct = os.path.join(cache_dir, h + suffix + ".tex")
@@ -872,6 +917,34 @@ def _resolve_stage_payload(pick, slot, stock_pol, default_pol):
         from mvc2_data import stagemerge
         pol_data = stagemerge.sort_translucent_strips(pol_data)
     return pol_data, tex_data
+
+
+def sync_arcade_ai(rom, enabled, log):
+    """Install/remove the Arcade AI pack to match `enabled`. Returns (rom,
+    record-to-save or None). Never fails the run: problems are logged."""
+    try:
+        from mvc2_data import arcade_ai
+    except Exception as e:                      # pack missing from this build
+        if enabled:
+            print(f"Arcade (WIP): unavailable ({e})")
+        return rom, None
+    try:
+        with open(ARCADE_AI_STATE, encoding="utf-8-sig") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        record = {}
+    try:
+        rom, record, msg = arcade_ai.sync(rom, enabled, record)
+    except Exception as e:
+        msg = f"Arcade (WIP): skipped ({e})"
+        print(msg)
+        log.append(msg)
+        return rom, None
+    if msg:
+        print(msg)
+        log.append(msg)
+        log.append("")
+    return rom, record
 
 
 def load_stage_playlist(name):
@@ -950,8 +1023,7 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
         builds = [p for p in ports if p.get("pol") and is_pipeline_port(p["pol"])]
         for p in builds:
             rp = repacked_port(p["pol"], p["tex"], repack_cache)
-            if rp:
-                eligible_ports.append((p, rp))
+            eligible_ports.append((p, rp))     # rp None: may still fit some slots as is
         if not quiet:
             print(f"Cross-slot ports: {len(eligible_ports)} of {len(ports)} "
                   f"stages mergeable into animated slots")
@@ -1002,18 +1074,26 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
             sr, sb = stagemerge.slot_caps(stock_pol, stock_tex)
             pinned = [(p, None) for p in pools.get(slot, []) if p.get("port")]
             for p, rp in eligible_ports + pinned:
+                raw = port_as_is(p, stock_pol, stock_tex)
+                if raw and not stagemerge.merge_ok(stock_pol, stock_tex, slot, *raw)[0]:
+                    continue                 # e.g. no room for the DC stub in this slot
+                if raw:                      # fits as is: no repack (keeps tiling)
+                    pv = dict(p)
+                    pv["_repacked"] = raw
+                    safe.append(pv)
+                    continue
                 if rp is None:
                     rp = repacked_port(p["pol"], p["tex"], repack_cache)  # natural
                     if not rp:
                         continue
                 rpol, rtex = rp
-                if len(stagemerge.records(rpol)) > sr:
+                if len(stagemerge.records(rpol)) > sr - 1:      # one record stays free (DC stub)
                     folded = repacked_port(p["pol"], p["tex"], repack_cache,
-                                           max_tex=sr)
+                                           max_tex=sr - 1)
                     if not folded:
                         continue            # can't fold to this slot's records
                     rpol, rtex = folded
-                if stagemerge.fits(rpol, rtex, stock_pol, stock_tex):
+                if stagemerge.fits(rpol, rtex, stock_pol, stock_tex) and                         stagemerge.merge_ok(stock_pol, stock_tex, slot, rpol, rtex)[0]:
                     pv = dict(p)
                     pv["_repacked"] = (rpol, rtex)
                     safe.append(pv)
@@ -1038,8 +1118,18 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
         if lock_key:
             locked = next((v for v in safe if v["key"] == lock_key), None)
             if locked is None:
+                # say WHY in last_run.txt too, so a user's log explains a lock
+                # that didn't take (missing file vs. doesn't fit this slot)
+                known_v = next((v for vs in pools.values() for v in vs
+                                if v["key"] == lock_key), None)
+                why = ("its stage files aren't downloaded - run Download / Update"
+                       if known_v is None else
+                       "it can't go in this slot (too big, or Training-only)")
                 print(f"  Warning: locked stage {lock_key} unavailable for "
-                      f"slot {slot} - randomizing instead")
+                      f"slot {slot} ({why}) - randomizing instead")
+                log.append(f"  {slot} {slot_names.get(slot, slot)}: LOCK NOT "
+                           f"APPLIED - {(known_v or {}).get('name', lock_key)}: "
+                           f"{why}; picked randomly instead")
         if not pool and not locked:
             continue
         pol_i, tex_i = stagelib.slot_entries(slot)
@@ -1535,7 +1625,8 @@ def main():
         return 0 if unprotect_palettes(arc_path, char_filter_id) else 1
 
     # Validate skins directory
-    if not os.path.isdir(skins_dir):
+    # (not needed when palettes aren't being randomized - e.g. Arcade-only use)
+    if not os.path.isdir(skins_dir) and config.get("randomize_palettes", True):
         print(f"Error: Skins directory not found: {skins_dir}")
         print("Use --skins to specify the path, or --gallery-download to download them")
         return 1
@@ -1568,9 +1659,18 @@ def main():
     else:
         rom = None
 
+    # Arcade CPU-AI pack: install or remove it to match the setting, BEFORE the
+    # palette work (it re-lays out the archive; the palette/FX entries don't move).
+    ai_record = None
+    run_log_pre = []
+    if rom is not None:
+        rom, ai_record = sync_arcade_ai(
+            rom, bool(config.get("arcade_enabled", True) and config.get("arcade_ai", True)),
+            run_log_pre)
+
     total_assigned = 0
     total_locked = 0
-    run_log = []  # collected for last_run.txt
+    run_log = list(run_log_pre)  # collected for last_run.txt
 
     verdicts_raw = load_gallery_verdicts_raw()   # palette keep/delete verdicts
     # False -> only kept palettes roll; True (default) -> kept + unreviewed roll
@@ -1887,6 +1987,19 @@ def main():
                                           load_stage_playlist(
                                               config.get("stage_playlist")))
         run_log.extend(stage_log)
+        # Quiet mode (the app) prints no per-slot lines: give a summary, and
+        # always surface locks that didn't take or stages that failed.
+        picks = [ln for ln in stage_log if ln[:4].strip()[:2] in stagelib.STAGE_SLOTS
+                 and ": " in ln and "LOCK NOT APPLIED" not in ln
+                 and " FAILED (" not in ln]
+        problems = [ln.strip() for ln in stage_log
+                    if "LOCK NOT APPLIED" in ln or " FAILED (" in ln]
+        if args.quiet and picks:
+            n_lock = sum("[locked]" in ln for ln in picks)
+            print(f"Stages: {len(picks)} slot(s) set ({n_lock} locked, "
+                  f"{len(picks) - n_lock} rolled) - full list in last_run.txt")
+        for ln in problems:
+            print(f"  Stage {ln}")
     elif args.stages and rom is None:
         print("[dry-run] Stage roll skipped (needs the ROM); run without --dry-run.")
 
@@ -1898,6 +2011,12 @@ def main():
         print("Writing modified archive...")
         write_arc(arc_path, rom)
         save_palette_state(state)
+        if ai_record is not None:
+            try:
+                with open(ARCADE_AI_STATE, "w") as fh:
+                    json.dump(ai_record, fh)
+            except OSError:
+                pass
         # Save assignment log so user can check what was applied
         with open(LAST_RUN_LOG, "w") as f:
             f.write("\n".join(run_log) + "\n")

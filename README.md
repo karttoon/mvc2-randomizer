@@ -1,248 +1,127 @@
-# MvC2 Steam Randomizer
+# MvC2 Randomizer
 
-Randomizes character palettes in the Steam version of **Marvel vs. Capcom 2** (from the Fighting Collection). Each game launch gets a fresh set of random color schemes across all 56 characters and 6 button slots.
+An archive of community-made art for **Marvel vs. Capcom 2** - **13,000+ character
+palettes and 200+ stages** - and a Windows app that brings it into the Steam
+*MARVEL vs. CAPCOM Fighting Collection*.
 
-Uses curated skin PNGs from the [MvC2 Skins Gallery](https://github.com/karttoon/mvc2-skins). Includes a web-based gallery viewer for reviewing and curating your skin collection.
+The stages are community retextures of MvC2's own stages, ports of stages from other
+games, and entirely new originals. Pick the ones you like and the app mixes them into
+your game: new looks every time you play, or exactly the setup you choose.
 
-## What This Changes
+> **[Download MvC2Randomizer.exe from the latest release](https://github.com/karttoon/mvc2-randomizer/releases/latest)**
+>
+> It's a single Windows exe with nothing to install. You need the Steam *MARVEL vs. CAPCOM
+> Fighting Collection: Arcade Classics*. See [Getting started](#getting-started).
 
-This tool randomizes **character palettes** across all 56 playable characters and 6 button colors. It handles:
+![Home tab](docs/images/home.png)
 
-- **Body palettes** — the main character sprite color scheme
-- **Accessory palettes** — multi-row characters like Sentinel (drones/rockets), Strider (Ouroboros/tiger/eagle), Tron Bonne (Servbot helpers), SonSon (staff/monkey), and others
-- **Super trail / afterimage slots** — so supers and dashes match the new colors
-- **Animation frame palettes** — intro animations, shine frames, stance changes, power-up effects, counterflash, teleport, and other special move visuals for 20+ characters
-- **Shared effect palettes** — fly-mode flames (Sentinel), launcher flames, and similar shared entries
+## The archive
 
-It does **not** modify:
+### Palettes
 
-- Status effect palettes (burn, shock, kinetic charge overlays)
-- HUD elements or portraits
+Over 13,000 palettes across every character and all six button colors, from the
+[MvC2 Skins Gallery](https://github.com/karttoon/mvc2-skins). Review them in the
+Palette Gallery and keep or reject each one. There's no limit on how many you keep -
+every kept palette goes into the pool, so the more you like, the more variety you get.
 
-## Requirements
+![Palette Gallery - Magneto](docs/images/palette-gallery.png)
 
-- Python 3.10+
-- [Pillow](https://pypi.org/project/Pillow/) (`pip install Pillow`)
-- Steam version of MARVEL vs. CAPCOM Fighting Collection
+### Stages
 
-## Quick Start
+202 stages for MvC2's 17 stage slots: 83 retextures of the original stages, 103 ports
+from other games and 16 brand-new originals. Keep the ones you like (green), reject the
+rest (red), and group favorites into playlists. Ports and originals can go into any
+stage slot, not just Training.
 
-```bash
-# 1. Clone this repo
-git clone https://github.com/karttoon/mvc2-randomizer.git
-cd mvc2-randomizer
+![Stage Gallery - Clock Tower (snowy), rejected stages shown](docs/images/stage-gallery.png)
 
-# 2. Install dependencies
-pip install Pillow
+## FX colors
 
-# 3. Download the skins gallery
-python mvc2_randomizer.py --gallery-download --skins ./skins
+Fireballs, beams, sparks and other effects get their own coloring - ten color themes
+(Shades, Opposite, Rainbow, Rainbow Reverse, Grayscale, Invert, Chaos, Thermal, Night
+Vision and Neon) on top of the stock colors. Set a theme for the whole cast, then lock
+individual effects to their own theme and base color per button, so every character
+can look different. A few effects follow the character's palette; most take on the
+theme you pick.
 
-# 4. Randomize!
-python mvc2_randomizer.py --skins ./skins
-```
+![FX tab - Akuma](docs/images/fx.png)
 
-The game install path is auto-detected from the default Steam location. Use `--game` to override if your install is elsewhere.
+## Arcade mode (work in progress)
 
-## Steam Setup (Auto-Randomize on Launch)
+Arcade mode, turned up to 11. The CPU is far more aggressive in how it plays, uses
+dozens of real combos on every character, and fights at full strength from the first
+second. It also deals and takes full damage, like a human player (stock MvC2 scales
+every CPU hit to 75%). These fights are a real challenge now - and a lot of fun.
 
-A `launch.bat` script is included that randomizes palettes and then lets Steam launch the game. This makes it so every time you hit Play in Steam, you get fresh random palettes.
+- **CPU teams** - the game's own picks, **fully random** teams (any three characters with
+  random assists, new every fight), or teams from your own lists
+- **Endless Tower** - after fight 7 the tower starts over with new opponents until you lose
+- **Shuffled stages** - every stage comes up once before any of them repeats
+- **CPU updates** - the CPU keeps improving between app releases. **Check for CPU pack
+  updates** (Arcade tab, or Settings > Content) shows whether a newer CPU is out and
+  downloads it if you say so - the app never goes online unless you click.
 
-### Setup Steps
+![Arcade tab](docs/images/arcade.png)
 
-1. **Edit `launch.bat`** — open it in a text editor and update the `PYTHON` path at the top:
+Build your own CPU team lists - characters and their α / β / γ assists, colored as on
+the select screen:
 
-   ```bat
-   REM Path to Python (find yours with: where python)
-   set PYTHON=C:\Users\YOU\AppData\Local\Programs\Python\Python312\python.exe
-   ```
+![Team lists](docs/images/team-editor.png)
 
-   The `RANDOMIZER` and `SKINS` paths default to the script's own directory, so they work automatically if you launch from the repo folder. To find your Python path, open a terminal and run `where python`.
+The live Arcade features run alongside the game, so keep the app open while you play
+(minimized is fine) or start the game through Steam with the launch option.
 
-2. **Set as Steam launch option:**
-   - Open Steam and find **MARVEL vs. CAPCOM Fighting Collection** in your library
-   - Right-click → **Properties**
-   - Under **General**, find **Launch Options**
-   - Paste this (adjust the path to where you put `launch.bat`):
+## Getting started
 
-   ```
-   "C:\path\to\mvc2-randomizer\launch.bat" && %command%
-   ```
+1. Download **`MvC2Randomizer.exe`** from the
+   [latest release](https://github.com/karttoon/mvc2-randomizer/releases/latest) and put it in a
+   folder of its own - it keeps its settings in a `data` folder next to it.
+2. Run it. First-time setup finds your game, backs up your game file, and shows what's
+   already different from the stock game.
 
-3. **Launch the game normally from Steam** — palettes will randomize before the game starts.
+   ![First-time setup](docs/images/first-run.png)
 
-> **Note:** The `&& %command%` part is required. It tells Steam to launch the actual game after the batch script finishes. Without it, the game won't start.
+3. Choose what to change - palettes, stages, FX colors, Arcade. Everything starts off.
+4. For palettes or stages, download the archive: **Settings > Content > Download / Update
+   gallery content** (about 750 MB; an update downloads it again in full).
+5. Click **Randomize now** on the Home tab - or use **Settings > Enable Auto-Randomize in
+   Steam** to add a launch option, and every Play from Steam applies your settings
+   before the game starts.
 
-### Troubleshooting
+## Your game stays safe
 
-- **Game doesn't launch:** Make sure `&& %command%` is at the end of the launch option
-- **"python is not recognized":** The `PYTHON` path in `launch.bat` is wrong — run `where python` to find the correct path
-- **Randomizer errors but game still launches:** The launcher is designed to continue to game launch even if randomization fails — check the console output for error details
-- **Want to stop randomizing:** Remove the launch option from Steam, then run `python mvc2_randomizer.py --restore` to go back to default palettes
+Before changing anything, the app saves a copy of your game file exactly as it was.
+**Home > Restore** puts back that original file, the stock game, or just some parts
+(palettes, FX colors, stages, CPU). Anything you switch off is left exactly as it is,
+and edits made with other tools (e.g. PalMod) are detected and protected.
 
-## CLI Reference
+![Restore](docs/images/restore.png)
 
-```
-python mvc2_randomizer.py [options]
-```
+Files changed by *other* tools can only be reset by Steam: right-click the game >
+Properties > Installed Files > **Verify integrity of game files**.
 
-| Flag | Description |
-|------|-------------|
-| `--skins PATH` | Path to skins collection folder |
-| `--game PATH` | Game install directory (auto-detected if omitted) |
-| `--config PATH` | Path to config JSON (default: `randomizer_config.json`) |
-| `--character NAME` | Only randomize a specific character |
-| `--seed N` | Fixed random seed for reproducible results |
-| `--dry-run` | Show what would be assigned without modifying files |
-| `--restore` | Restore `game_50.arc` from backup |
-| `--gallery-download` | Download/update skins from the gallery (merges new, keeps existing) |
-| `--force-backup` | Recreate backup from current game file |
-| `--list-characters` | List all valid character names |
+## Locks, mixes and sharing
 
-### Examples
+- **Locks** - pin a palette to a character's button, or a stage to a slot, so it never
+  changes.
+- **Your mix** - pick the six palettes you want for a character (one per button) right in
+  the Palette Gallery.
+- **Export game file** (Home) - save your finished game file for someone who just wants
+  to drop it in, no app needed.
+- **Curated mixes** (Settings) - share your keeps, rejects, locks, playlists and FX setup,
+  or start from someone else's.
 
-```bash
-# Randomize all characters
-python mvc2_randomizer.py --skins ./skins
+## Something wrong?
 
-# Randomize only Storm
-python mvc2_randomizer.py --skins ./skins --character Storm
+**Settings > Save support info** zips your settings and logs (never your game file) to
+send with a bug report.
 
-# Reproducible results with a seed
-python mvc2_randomizer.py --skins ./skins --seed 42
+## Credits
 
-# Preview assignments without changing anything
-python mvc2_randomizer.py --skins ./skins --dry-run
-
-# Restore original game palettes
-python mvc2_randomizer.py --restore
-
-# Download gallery skins (safe to re-run — only adds new ones)
-python mvc2_randomizer.py --gallery-download --skins ./skins
-```
-
-## Configuration
-
-On first run, config files are auto-generated next to the script:
-
-### randomizer_config.json
-
-Stores paths and global settings. CLI flags override these values.
-
-```json
-{
-    "skins_path": "C:/path/to/skins",
-    "game_path": null,
-    "seed": null
-}
-```
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `skins_path` | string/null | Path to skins folder. `null` uses `./skins` next to script. |
-| `game_path` | string/null | Game install directory. `null` uses default Steam path. |
-| `seed` | int/null | Fixed seed for reproducible randomization. `null` = random each run. |
-
-### skin_locks.txt
-
-Controls per-character, per-button skin assignments. Every character and button slot is listed. Set a filename to **lock** that skin to that slot, or leave as `null` to **randomize** it each run.
-
-```
-# Each line is: Character_Name BUTTON=filename.png
-# Set a filename to lock that skin to that button slot.
-# Leave as "null" to randomize that slot each run.
-
-Akuma LP=Akuma_9bc20b73_AccurateMix.png
-Akuma LK=null
-Akuma HP=Akuma_976f5700_Dragonball.png
-Akuma HK=null
-Akuma A1=null
-Akuma A2=null
-
-Storm LP=null
-Storm LK=null
-Storm HP=null
-Storm HK=null
-Storm A1=null
-Storm A2=null
-```
-
-In this example:
-- Akuma's LP always uses the AccurateMix skin, HP always uses the Dragonball skin
-- Akuma's other 4 buttons get randomized each run
-- All of Storm's buttons get randomized each run
-
-**Filenames are case-insensitive** — `akuma_9bc20b73_accuratemix.png` and `Akuma_9bc20b73_AccurateMix.PNG` both work. The filename must match a file in that character's skins folder.
-
-## Skins Folder Structure
-
-Skins are organized in folders by character name (underscores for spaces, hyphens preserved where canonical). The `--gallery-download` command creates these folders automatically. If adding your own skins, use `--list-characters` to see all valid names, or match an existing folder name.
-
-Two special **combined folders** contain palettes shared between related characters:
-
-- `Iron_Men` — shared between Iron Man and War Machine
-- `Wolverines` — shared between both Wolverine variants
-
-These exist alongside the individual character folders (`Iron_Man`, `War_Machine`, `Wolverine`, `Wolverine_Bone_Claw`).
-
-## Gallery Download & Custom Skins
-
-`--gallery-download` fetches the latest skins from the [MvC2 Skins Gallery](https://github.com/karttoon/mvc2-skins) and merges them into your skins folder. It's safe to run repeatedly:
-
-- **New skins** from the gallery are added
-- **Existing skins** (including your own custom palettes) are never overwritten
-- **Previously rejected skins** (marked for deletion in the gallery reviewer) are skipped
-
-### Adding Your Own Skins
-
-Place indexed PNG sprite sheets in the appropriate character folder. Skin PNGs must be **indexed color** (palette mode) with 16 colors per palette row. The first 16 palette entries are the body colors. Multi-row characters (like Spiral or Sentinel) use additional palette rows for accessories.
-
-## Gallery Reviewer
-
-A built-in web-based tool for reviewing and curating your skin collection. Lets you page through every skin, keep the ones you like, and batch-delete the rest.
-
-```bash
-python gallery.py [skins_path] [--port PORT]
-```
-
-Opens a browser with a full-screen viewer where you can rate each skin:
-
-- **Y / Up Arrow** — keep the skin
-- **N / Down Arrow** — mark for deletion
-- **Left / Right Arrow** (or A / D) — navigate between skins
-- **Delete All Marked** — batch-delete all skins marked for deletion from disk
-
-The sidebar shows every character with a progress bar so you can see how many skins are reviewed vs. remaining. Click any character to jump to its first unreviewed skin.
-
-Verdicts are saved to `gallery_verdicts.json` and persist across sessions. Future `--gallery-download` runs will skip any skins you previously rejected, so they won't reappear.
-
-## Run Log
-
-After each randomization, `last_run.txt` is saved with every skin assignment. If you spot a palette you like in-game and want to know which skin file it was, check this file. You can then copy the filename into `skin_locks.txt` to lock it in for future runs.
-
-## Backup & Restore
-
-The tool automatically backs up `game_50.arc` before the first modification. The backup is stored next to the game file as `game_50.arc.bak`.
-
-- **`--restore`** copies the backup over the game file, reverting to default palettes
-- **`--force-backup`** recreates the backup from the current game file (use after a game reinstall/update)
-- The tool detects game reinstalls automatically (if the game file is newer than the backup, it refreshes the backup)
-
-To fully reset without the tool: use Steam's "Verify integrity of game files" to re-download the original `game_50.arc`.
-
-## How It Works
-
-1. Reads and decompresses `game_50.arc` (MT Framework ARC archive with zlib-compressed ROM)
-2. For each of 56 characters, checks `skin_locks.txt` — locked slots use the specified skin, unlocked slots get a random skin from the folder
-3. Extracts the indexed color palette from each skin PNG (handles single-row and multi-row sprites)
-4. Writes palette data to the correct ROM offsets in ARGB4444 format (same as PalMod):
-   - Body palette + accessory rows mapped to their per-button slots
-   - Super trail / afterimage slots (6-7) filled with the body palette
-   - Animation frame extras (intro, shine, stance, counterflash, etc.) derived from body palette with per-frame luminance adjustments where applicable
-   - Shared effect palettes (e.g. Sentinel fly-mode flames) composited from the appropriate source palettes
-5. Recompresses and writes the modified ARC back
-
-Palette data and character offsets are derived from [PalMod](https://github.com/Preppy/PalMod)'s MVC2 definitions.
+Palettes and stages are made by the MvC2 community - see the
+[MvC2 Skins Gallery](https://github.com/karttoon/mvc2-skins) for the artists. Palette
+data and character offsets come from [PalMod](https://github.com/Preppy/PalMod)'s MvC2
+definitions.
 
 ## License
 

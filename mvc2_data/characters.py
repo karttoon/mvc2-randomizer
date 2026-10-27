@@ -82,6 +82,18 @@ EXTRA_BODY_BUTTON_SLOTS = {
     0x32: {3},       # Colossus — slot 3 (Stance Frame Main Color)
 }
 
+# Per-button slots 6-7 are the super-trail (afterimage) palettes for most
+# characters, so a skin's body palette is copied there. For these characters
+# they hold real effects instead, which must keep their stock colors (FX can
+# still recolor them).
+NON_TRAIL_SLOTS = {
+    0x13: {6, 7},    # Ruby Heart — 6 anchor/barrel/swords, 7 Swartzelle
+    0x1C: {6, 7},    # Mega Man — 6 charged Mega Buster, 7 Hyper Mega Man/Rush
+    0x1D: {6},       # Roll — 6 charged Mega Buster
+    0x1F: {7},       # BB Hood — 7 Molotov cocktail (bottle)
+    0x36: {6, 7},    # Thanos — 6/7 Infinity Gauntlet gems
+}
+
 # Extras entries (index 56+) that use the character body sprite, keyed by
 # button index. These are animation frame palettes (shine, charging, stance,
 # power dive, etc.) that the game reads during specials/supers/intros.

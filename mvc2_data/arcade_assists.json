@@ -1,0 +1,450 @@
+{
+ "0": {
+  "name": "Ryu",
+  "types": [
+   "Anti-air",
+   "Projectile",
+   "Expansion"
+  ]
+ },
+ "1": {
+  "name": "Zangief",
+  "types": [
+   "Ground",
+   "Throw",
+   "Air Throw"
+  ]
+ },
+ "2": {
+  "name": "Guile",
+  "types": [
+   "Anti-air",
+   "Projectile",
+   "Balance"
+  ]
+ },
+ "3": {
+  "name": "Morrigan",
+  "types": [
+   "Anti-air",
+   "Projectile",
+   "Balance"
+  ]
+ },
+ "4": {
+  "name": "Anakaris",
+  "types": [
+   "Ground",
+   "Throw",
+   "Variety"
+  ]
+ },
+ "5": {
+  "name": "Strider",
+  "types": [
+   "Ground",
+   "Variety",
+   "Projectile"
+  ]
+ },
+ "6": {
+  "name": "Cyclops",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Expansion"
+  ]
+ },
+ "7": {
+  "name": "Wolverine",
+  "types": [
+   "Expansion",
+   "Anti-air",
+   "Dash"
+  ]
+ },
+ "8": {
+  "name": "Psylocke",
+  "types": [
+   "Anti-air",
+   "Projectile",
+   "Balance"
+  ]
+ },
+ "9": {
+  "name": "Iceman",
+  "types": [
+   "Projectile",
+   "Variety",
+   "Balance"
+  ]
+ },
+ "10": {
+  "name": "Rogue",
+  "types": [
+   "Anti-air",
+   "Dash",
+   "Throw"
+  ]
+ },
+ "11": {
+  "name": "Captain America",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Dash"
+  ]
+ },
+ "12": {
+  "name": "Spider-Man",
+  "types": [
+   "Capture",
+   "Expansion",
+   "Anti-air"
+  ]
+ },
+ "13": {
+  "name": "Hulk",
+  "types": [
+   "Ground",
+   "Dash",
+   "Anti-air"
+  ]
+ },
+ "14": {
+  "name": "Venom",
+  "types": [
+   "Expansion",
+   "Variety",
+   "Launcher"
+  ]
+ },
+ "15": {
+  "name": "Dr. Doom",
+  "types": [
+   "Variety",
+   "Anti-air",
+   "Projectile"
+  ]
+ },
+ "16": {
+  "name": "Tron",
+  "types": [
+   "Throw",
+   "Anti-air",
+   "Projectile"
+  ]
+ },
+ "17": {
+  "name": "Jill",
+  "types": [
+   "Heal",
+   "Dash",
+   "Projectile"
+  ]
+ },
+ "18": {
+  "name": "Hayato",
+  "types": [
+   "Expansion",
+   "Anti-air",
+   "Balance"
+  ]
+ },
+ "19": {
+  "name": "Ruby Heart",
+  "types": [
+   "Anti-air",
+   "Capture",
+   "Enhance"
+  ]
+ },
+ "20": {
+  "name": "SonSon",
+  "types": [
+   "Heal",
+   "Projectile",
+   "Anti-air"
+  ]
+ },
+ "21": {
+  "name": "Amingo",
+  "types": [
+   "Heal",
+   "Enhance",
+   "Balance"
+  ]
+ },
+ "22": {
+  "name": "Marrow",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Expansion"
+  ]
+ },
+ "23": {
+  "name": "Cable",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Variety"
+  ]
+ },
+ "27": {
+  "name": "Chun-Li",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Expansion"
+  ]
+ },
+ "28": {
+  "name": "Mega Man",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Balance"
+  ]
+ },
+ "29": {
+  "name": "Roll",
+  "types": [
+   "Projectile",
+   "Variety",
+   "Balance"
+  ]
+ },
+ "30": {
+  "name": "Akuma",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Expansion"
+  ]
+ },
+ "31": {
+  "name": "BB Hood",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Variety"
+  ]
+ },
+ "32": {
+  "name": "Felicia",
+  "types": [
+   "Expansion",
+   "Ground",
+   "Variety"
+  ]
+ },
+ "33": {
+  "name": "Charlie",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Balance"
+  ]
+ },
+ "34": {
+  "name": "Sakura",
+  "types": [
+   "Dash",
+   "Projectile",
+   "Expansion"
+  ]
+ },
+ "35": {
+  "name": "Dan",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Variety"
+  ]
+ },
+ "36": {
+  "name": "Cammy",
+  "types": [
+   "Anti-air",
+   "Dash",
+   "Expansion"
+  ]
+ },
+ "37": {
+  "name": "Dhalsim",
+  "types": [
+   "Projectile",
+   "Ground",
+   "Anti-air"
+  ]
+ },
+ "38": {
+  "name": "M. Bison",
+  "types": [
+   "Projectile",
+   "Variety",
+   "Expansion"
+  ]
+ },
+ "39": {
+  "name": "Ken",
+  "types": [
+   "Anti-air",
+   "Projectile",
+   "Expansion"
+  ]
+ },
+ "40": {
+  "name": "Gambit",
+  "types": [
+   "Projectile",
+   "Expansion",
+   "Launcher"
+  ]
+ },
+ "41": {
+  "name": "Juggernaut",
+  "types": [
+   "Ground",
+   "Dash",
+   "Variety"
+  ]
+ },
+ "42": {
+  "name": "Storm",
+  "types": [
+   "Projectile",
+   "Expansion",
+   "Variety"
+  ]
+ },
+ "43": {
+  "name": "Sabretooth",
+  "types": [
+   "Expansion",
+   "Projectile",
+   "Launcher"
+  ]
+ },
+ "44": {
+  "name": "Magneto",
+  "types": [
+   "Projectile",
+   "Capture",
+   "Launcher"
+  ]
+ },
+ "45": {
+  "name": "Shuma-Gorath",
+  "types": [
+   "Projectile",
+   "Expansion",
+   "Balance"
+  ]
+ },
+ "46": {
+  "name": "War Machine",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Variety"
+  ]
+ },
+ "47": {
+  "name": "Silver Samurai",
+  "types": [
+   "Ground",
+   "Projectile",
+   "Launcher"
+  ]
+ },
+ "48": {
+  "name": "Omega Red",
+  "types": [
+   "Throw",
+   "Anti-air",
+   "Ground"
+  ]
+ },
+ "49": {
+  "name": "Spiral",
+  "types": [
+   "Projectile",
+   "Variety",
+   "Ground"
+  ]
+ },
+ "50": {
+  "name": "Colossus",
+  "types": [
+   "Dash",
+   "Anti-air",
+   "Launcher"
+  ]
+ },
+ "51": {
+  "name": "Iron Man",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Launcher"
+  ]
+ },
+ "52": {
+  "name": "Sentinel",
+  "types": [
+   "Projectile",
+   "Launcher",
+   "Ground"
+  ]
+ },
+ "53": {
+  "name": "Blackheart",
+  "types": [
+   "Ground",
+   "Anti-air",
+   "Launcher"
+  ]
+ },
+ "54": {
+  "name": "Thanos",
+  "types": [
+   "Capture",
+   "Dash",
+   "Launcher"
+  ]
+ },
+ "55": {
+  "name": "Jin",
+  "types": [
+   "Expansion",
+   "Anti-air",
+   "Launcher"
+  ]
+ },
+ "56": {
+  "name": "Captain Commando",
+  "types": [
+   "Ground",
+   "Anti-air",
+   "Expansion"
+  ]
+ },
+ "57": {
+  "name": "Bonerine",
+  "types": [
+   "Ground",
+   "Launcher",
+   "Variety"
+  ]
+ },
+ "58": {
+  "name": "Servbot",
+  "types": [
+   "Projectile",
+   "Anti-air",
+   "Balance"
+  ]
+ }
+}

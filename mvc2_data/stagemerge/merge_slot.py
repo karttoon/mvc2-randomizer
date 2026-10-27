@@ -126,7 +126,7 @@ def sort_translucent_strips(pol):
     return bytes(b)
 
 
-def merge(stock_pol, stock_tex, slot, port_pol, port_tex, draw_index=0):
+def merge(stock_pol, stock_tex, slot, port_pol, port_tex, draw_index=0, sort=True):
     """Merge a repacked port into a stock slot. Returns (out_pol, out_tex),
     both exactly the stock sizes. Raises MergeError on an impossible pairing.
 
@@ -146,12 +146,23 @@ def merge(stock_pol, stock_tex, slot, port_pol, port_tex, draw_index=0):
     orecs = records(ob)
     spans = model_spans(sb)
     ospans = model_spans(ob)
-    if len(orecs) > len(srecs):
+    # DC stub-record rule (CPS2_StageRE notes/30, 2026-10-26): one record must
+    # stay free as the zeroed stub the hidden stock meshes sample. On a Dreamcast
+    # the stage code rewrites those meshes' render state every frame, so only the
+    # transparent stub texture keeps them invisible - with no free record they
+    # sampled the port's own art (giant smears). Steam can't show this.
+    if len(orecs) > len(srecs) - 1:
         raise MergeError(f"port needs {len(orecs)} texture records, slot {slot} has "
-                         f"{len(srecs)} - repack smaller")
+                         f"{len(srecs)} and one must stay free as the stub - repack "
+                         f"to {len(srecs) - 1}")
     if len(otex) > len(stex):
         raise MergeError(f"port TEX is {len(otex):,} B, slot {slot} holds {len(stex):,} - "
                          f"repack smaller")
+    _off = 0
+    for i_, r_ in enumerate(orecs):      # bases get rewritten as a running sum
+        if r_["base"] - TEX_RAM != _off:
+            raise MergeError(f"port texture record {i_} isn't contiguous in the TEX - repack it")
+        _off += r_["w"] * r_["h"] * 2
 
     # one stock model becomes the port's; the draw index by default, else the
     # largest (with the two table entries swapped so the port still draws at DI)
@@ -233,16 +244,59 @@ def merge(stock_pol, stock_tex, slot, port_pol, port_tex, draw_index=0):
         off += r["w"] * r["h"] * 2
     big = 8 * 8 * 2
     pad = (len(otex) + 31) & ~31
-    inside = pad + big <= len(stex)
-    stub = pad if inside else len(stex)
+    full = 128 * 128 * 2                 # what a stub record describes (readers shrunk to 8x8)
+    # Stub placement (notes/30): the zero padding after the art if a whole 128x128
+    # stub fits; else the longest 32-byte-aligned run of zero texels INSIDE the art
+    # if >= 32 KB (ARGB1555 0x0000 is transparent whatever the atlas format - a
+    # port whose art fills the TEX exactly, e.g. Death Valley in 0D, has no
+    # padding); else padding big enough for the 8x8 readers. Never past the TEX end.
+    stub, inside = len(stex), False
+    if pad + full <= len(stex):
+        stub, inside = pad, True
+    else:
+        best, run, st_ = (0, 0), 0, 0
+        for i_ in range(0, len(otex) - 1, 2):
+            if otex[i_] == 0 and otex[i_ + 1] == 0:
+                if run == 0:
+                    st_ = i_
+                run += 2
+                a_ = (st_ + 31) & ~31
+                if st_ + run - a_ > best[0]:
+                    best = (st_ + run - a_, a_)
+            else:
+                run = 0
+        if best[0] >= full:
+            stub, inside = best[1], True
+        elif pad + big <= len(stex):
+            stub, inside = pad, True
+    if not inside:
+        raise MergeError(f"no room for the stub inside slot {slot}'s TEX (a stub past "
+                         f"the TEX end samples garbage on a Dreamcast)")
     for i in range(len(orecs), len(srecs)):
         struct.pack_into("<HHBBHII", out, trs + i * REC, 128, 128, 0, srecs[i]["fl"],
                          0, TEX_RAM + stub, 0)
-        if not inside:
-            stub += 128 * 128 * 2
     struct.pack_into("<HHBBHII", out, trs + len(srecs) * REC, 0, 0, 0, 0, 0, 0, 0)
 
     out_tex = otex + b"\0" * (len(stex) - len(otex))
+    # DC stub asserts (notes/30): the stub is zero; every hidden stock mesh
+    # samples a stub record; no port mesh does
+    if any(out_tex[stub:stub + big]) or (any(out_tex[stub:min(stub + full, len(out_tex))])
+                                         and stub < len(otex)):
+        raise MergeError(f"the stub at TEX+{stub:#x} isn't zero")
+    for k in range(smc):
+        s_, e_ = spans[k]
+        tids = [struct.unpack_from("<I", out, o)[0] for o in (mesh_texids(out, s_, e_) or [])]
+        if k == victim:
+            # only real stub records count; 0xFFFFFFFF is the game's "no texture"
+            # marker (TVIndustries' Chaos Dimension / Temple of Fists / Suzaku Castle)
+            bad = [t for t in tids if len(orecs) <= t < len(srecs)]
+            if bad:
+                raise MergeError(f"port mesh texIds {sorted(set(bad))} reach the stub records")
+        else:
+            bad = [t for t in tids if not (len(orecs) <= t < len(srecs))]
+            if bad:
+                raise MergeError(f"stock model {k} still samples records {sorted(set(bad))}")
     # Steam paints translucent strips in submission order - sort them back-to-
     # front so a port authored on auto-sorting PowerVR renders right here too.
-    return sort_translucent_strips(bytes(out)), out_tex
+    # sort=False keeps the author's order (stages made for Steam already have it).
+    return (sort_translucent_strips(bytes(out)) if sort else bytes(out)), out_tex
