@@ -9,7 +9,7 @@ import os, sys, subprocess
 
 # Single source of truth for the app version (shown in the GUI, used for
 # release tags). Bump this when cutting a new version.
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 
 
 def app_dir():

@@ -1235,6 +1235,28 @@ def _fetch(url, limit=64 << 20):
     return data
 
 
+def pack_error(e):
+    """(kind, plain-language reason) for a failed CPU pack check or download; the details
+    go to the activity log."""
+    import socket
+    import urllib.error
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code == 404:
+            return ("none", "No newer CPU pack has been posted online yet - the one "
+                            "built into the app is the newest there is.")
+        return ("warn", f"The download site didn't answer properly (error {e.code}). "
+                        "It's usually temporary - try again in a little while.")
+    if isinstance(e, (urllib.error.URLError, socket.timeout, TimeoutError,
+                      ConnectionError)):
+        return ("warn", "Couldn't reach the download site (GitHub). Check your "
+                        "internet connection and try again.")
+    if isinstance(e, ValueError):
+        return ("warn", "The update information online couldn't be read. Try again "
+                        "later, or get the latest app from the Releases page.")
+    return ("warn", "Something went wrong. Try again later - the "
+                    "details are in Settings > Save support info.")
+
+
 def arcade_check_update():
     """Read the published manifest (a few KB). Returns {'latest', 'current',
     'newer', 'size', 'needs_app'}; raises on a network/format problem."""
@@ -1299,7 +1321,7 @@ def arcade_download_update(progress=None, status=None, manifest=None):
         return 0
     except Exception as e:
         activity.error("CPU pack download", e)
-        say(f"Couldn't get the CPU pack: {e}")
+        say("Couldn't get the CPU pack - nothing was changed. " + pack_error(e)[1])
         return 1
 
 

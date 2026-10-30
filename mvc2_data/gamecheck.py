@@ -118,6 +118,7 @@ def check(rom, vanilla=None, stock=None, fxr=None):
     try:
         from . import arcade_ai
         rep["cpu"] = arcade_ai.status(rom)
+        rep["cpu_oversize"] = len(arcade_ai.oversized_in_rom(rom))
     except Exception:
         rep["cpu"] = "unknown"
     # everything else. Entries holding palette blocks are compared with the
@@ -165,6 +166,9 @@ def summary_lines(rep):
     cpu = {"stock": None, "installed": "Smarter CPU (Arcade) installed",
            "ours-old": "An older Smarter CPU version",
            "foreign": "CPU files changed by another mod"}.get(rep["cpu"], rep["cpu"])
+    if rep.get("cpu_oversize"):
+        cpu = (f"{cpu or 'CPU files changed'} - {pl(rep['cpu_oversize'], 'AI file')} over the "
+               "game's 4 KB limit (can freeze the game; Restore > CPU fixes it)")
     out.append(("cpu", cpu))
     out.append(("other", pl(len(rep['other']), 'other game file') + " changed by another tool"
                 if rep["other"] else None))

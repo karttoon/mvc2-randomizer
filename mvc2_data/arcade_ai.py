@@ -20,6 +20,11 @@ from . import ai_pack_apply as A
 
 PACK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_pack")   # built in
 PACK_FORMAT = 1                 # the pack layout this app understands
+# Steam MvC2 loads each character's AI files (PLxx_AI_SCRIPT_00..04) into fixed
+# 4 KB slots: a bigger file's tail is overwritten by the next one, the CPU runs
+# garbage script bytes and the game hangs (ArcadeLogic, 2026-10-29). Never
+# install one, from this pack or any other.
+AI_SLOT = 4096
 # A pack the user downloaded (Arcade tab > Check for CPU pack updates) - set by
 # the app to data/arcade_pack. Used instead of the built-in one when it's newer.
 USER_DIR = None
@@ -72,7 +77,32 @@ def validate_pack(pack_dir):
                         return False, f"{os.path.basename(path)} doesn't match the pack"
             except OSError:
                 return False, f"{os.path.basename(path)} is missing"
+    big = oversized(pack_dir)
+    if big:
+        return False, (f"{len(big)} AI file(s) are over the game's 4 KB limit "
+                       f"({', '.join(big[:3])}) - the game would freeze")
     return True, f"{len(ents)} AI files OK"
+
+
+def oversized(pack_dir=None):
+    """Names of the pack's AI files bigger than the game's 4 KB AI slot."""
+    pack_dir = pack_dir or active_dir()
+    out = []
+    for e in load_pack(pack_dir)["entries"]:
+        try:
+            n = os.path.getsize(os.path.join(pack_dir, e["file"]))
+        except OSError:
+            n = e.get("size", 0)
+        if max(n, e.get("size", 0)) > AI_SLOT:
+            out.append(e["name"])
+    return out
+
+
+def oversized_in_rom(rom, pack_dir=None):
+    """Names of the game's AI files (now) bigger than the 4 KB AI slot."""
+    ents = _entries(rom)
+    return [e["name"] for e in load_pack(pack_dir)["entries"]
+            if e["idx"] < len(ents) and len(ents[e["idx"]]) > AI_SLOT]
 
 
 def known_md5s(pack_dir=None):
@@ -144,8 +174,18 @@ def sync(rom, enabled, record=None, pack_dir=None):
     pack = load_pack(pack_dir)
     st = status(rom, record, pack_dir)
     if st == "foreign":
-        return rom, record or {}, ("Arcade (WIP): the game's CPU AI files were changed by "
-                                   "another mod or a newer Arcade build - left alone")
+        msg = ("Arcade (WIP): the game's CPU AI files were changed by another mod or "
+               "a newer Arcade build - left alone")
+        big = oversized_in_rom(rom, pack_dir)
+        if big:
+            msg += (f"\n  WARNING: {len(big)} of them are over the game's 4 KB AI limit "
+                    f"({', '.join(big[:3])}) - known to freeze the game. "
+                    "Home > Restore > CPU puts back the stock CPU.")
+        return rom, record or {}, msg
+    if enabled and oversized(pack_dir):
+        return rom, record or {}, ("Arcade (WIP): this CPU pack has AI files over the "
+                                   "game's 4 KB limit - NOT installed (it would freeze "
+                                   "the game)")
     if enabled and st == "installed":
         return rom, {str(e["idx"]): e["md5"] for e in pack["entries"]}, None
     if not enabled and st == "stock":

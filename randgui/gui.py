@@ -4237,15 +4237,20 @@ class App:
             try:
                 res = randomize.arcade_check_update()
             except Exception as e:
-                res = {"error": str(e)}
+                activity.error("CPU pack update check", e)
+                res = {"error": randomize.pack_error(e)}
             self.q.put(("call", lambda: self._arcade_pack_checked(res)))
         threading.Thread(target=work, daemon=True).start()
 
     def _arcade_pack_checked(self, res):
         self._arcade_pack_refresh()
         if res.get("error"):
-            messagebox.showerror("CPU pack", "Couldn't check for a new CPU pack:\n"
-                                 + res["error"])
+            kind, msg = res["error"]
+            if kind == "none":
+                messagebox.showinfo("CPU pack", msg)
+            else:
+                messagebox.showwarning("CPU pack", "Couldn't check for a new CPU pack.\n\n"
+                                       + msg)
             return
         if not res["newer"]:
             messagebox.showinfo("CPU pack", f"You have the latest CPU pack ({res['current']}).")
