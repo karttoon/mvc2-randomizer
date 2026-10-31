@@ -42,6 +42,11 @@ DMG_FULL = bytes([32]) + DMG_STOCK[1:]
 ROUTE_STOCK = bytes.fromhex("0001020304050608010304060502070806050007010302080306020407010508")
 SLOT0, SLOT_STRIDE = 0x3DB8, 0x738
 F_ACTIVE, F_CHAR, F_ASSIST = 0x0001, 0x4478 - SLOT0, 0x440D - SLOT0
+# colour (button) per team member, right after the char byte (ArcadeLogic,
+# verified on Steam 2026-10-31): 0-5 = LP LK HP HK A1 A2; the CPU always has 0.
+# Takes effect when written with the char/assist during select or on VS.
+F_COLOR = F_CHAR + 1
+BUTTONS = ("LP", "LK", "HP", "HK", "A1", "A2")
 FILL_BITS = 0x33A0A            # P + this + side: 0x77 once all 3 CPU slots are picked
 G_MODE, G_ROUND, G_HUMAN1, G_HUMAN2 = 0x4C, 0x81, 0x84, 0x85
 
@@ -156,9 +161,10 @@ def random_team(last=None):
             return team
 
 
-def team_str(team):
-    return " / ".join("%s-%s" % (CHARS[c], "ABY"[a] if a is not None and a < 3 else "?")
-                      for c, a in team)
+def team_str(team, colors=None):
+    return " / ".join("%s-%s%s" % (CHARS[c], "ABY"[a] if a is not None and a < 3 else "?",
+                                   " (%s)" % BUTTONS[colors[i]] if colors else "")
+                      for i, (c, a) in enumerate(team))
 
 
 # ---------------------------------------------------------------- process access
@@ -231,6 +237,9 @@ class Companion(threading.Thread):
 
     MUTEX = "Local\\MvC2RandomizerArcadeCompanion"
 
+    # settings that can change while it runs (from the next fight on)
+    LIVE_KEYS = ("teams", "random_teams", "pool", "active", "order", "random_colors")
+
     def __init__(self, settings, log=print, status=None):
         super().__init__(daemon=True, name="arcade-companion")
         self.s = settings
@@ -238,6 +247,12 @@ class Companion(threading.Thread):
         self.status = status or (lambda t: None)
         self._halt = threading.Event()
         self._mutex = None
+        self._new = None
+
+    def update(self, settings):
+        """New CPU-team settings from the app - used from the next fight on, even
+        mid-run (e.g. a team list switched on). Other settings need a restart."""
+        self._new = {k: settings.get(k) for k in self.LIVE_KEYS}
 
     # -- lifecycle --
     def stop(self):
@@ -389,6 +404,18 @@ class Companion(threading.Thread):
         next_check, used, forced, last_round, by_round = 0, [], None, None, {}
         loops, last_wrap = 0, 0.0
         while game.alive() and not self.stopping:
+            new, self._new = self._new, None
+            if new:
+                s.update(new)
+                teams_on = s.get("teams") and (s.get("pool") or s.get("random_teams"))
+                if not teams_on:
+                    why = "the game's own picks"
+                elif s.get("random_teams"):
+                    why = "fully random"
+                else:
+                    why = "%d teams from %s, order %s" % (
+                        len(s["pool"]), ", ".join(s.get("active") or []) or "-", s["order"])
+                self.log("Arcade companion: CPU teams changed - from the next fight: " + why)
             if (routes or s.get("max_rank") or full_dmg) and time.time() > next_check:
                 next_check = time.time() + 1
                 if routes and game.read(b + RVA_ROUTE, 32) == ROUTE_STOCK:
@@ -434,7 +461,8 @@ class Companion(threading.Thread):
                 if routes:                                 # deck carries on: no early repeats
                     self._new_routes(game, "the new run")
             last_round = rnd
-            if not teams_on or (rnd == 7 and s["boss"] == "abyss"):
+            colors_on = bool(s.get("random_colors"))
+            if not (teams_on or colors_on) or (rnd == 7 and s["boss"] == "abyss"):
                 self._sleep(0.01)
                 continue
             cpu = 1 if hf == 1 else 0
@@ -446,7 +474,9 @@ class Companion(threading.Thread):
                      and cur != forced)
             if fresh:
                 if rnd in by_round:                         # game re-ran its picker
-                    team = by_round[rnd]
+                    team, cols = by_round[rnd]
+                elif not teams_on:                          # the game's own picks
+                    team, cols = cur, None
                 elif s.get("random_teams"):
                     team = random_team(used[-1] if used else None)
                 elif s["order"] == "sequential":
@@ -460,17 +490,34 @@ class Companion(threading.Thread):
                         avail = [t for t in s["pool"] if t not in used] or s["pool"]
                     team = random.choice(avail)
                 if rnd not in by_round:
-                    used.append(team)
-                    by_round[rnd] = team
+                    if teams_on:
+                        used.append(team)
+                    cols = None
+                    if colors_on:
+                        # a random button each; never the colour the human gave the
+                        # same character (two of one character can't share one)
+                        hum = [P + SLOT0 + (pt * 2 + 1 - cpu) * SLOT_STRIDE for pt in range(3)]
+                        taken = {}
+                        for x in hum:
+                            hc, hcol = game.read(x + F_CHAR, 2)
+                            taken.setdefault(hc, set()).add(hcol)
+                        cols = [random.choice([k for k in range(6) if k not in taken.get(c, ())]
+                                              or [0]) for c, _ in team]
+                    by_round[rnd] = (team, cols)
                 want = [(c, default_assist[c] if a is None else a) for c, a in team]
-                for x, (c, a) in zip(slots, want):
-                    game.write(x + F_CHAR, bytes([c]))
-                    game.write(x + F_ACTIVE, bytes([c]))
-                    game.write(x + F_ASSIST, bytes([a]))
+                for i, (x, (c, a)) in enumerate(zip(slots, want)):
+                    if teams_on:
+                        game.write(x + F_CHAR, bytes([c]))
+                        game.write(x + F_ACTIVE, bytes([c]))
+                        game.write(x + F_ASSIST, bytes([a]))
+                    if cols:
+                        game.write(x + F_COLOR, bytes([cols[i]]))
                 forced = want
                 stage = self._stage_name(rnd)
-                self.log("Arcade companion: fight %d: %s   (game had %s)%s" % (
-                    loops * 7 + rnd + 1, team_str(want), " / ".join(CHARS[c] for c, _ in cur),
+                self.log("Arcade companion: fight %d: %s   (%s)%s" % (
+                    loops * 7 + rnd + 1, team_str(want, cols),
+                    "game had " + " / ".join(CHARS[c] for c, _ in cur) if teams_on
+                    else "the game's own pick",
                     "   stage: %s" % stage if stage else ""))
                 self.status("Fight %d: %s" % (loops * 7 + rnd + 1, team_str(want)))
             self._sleep(0.005)

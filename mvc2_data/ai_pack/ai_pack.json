@@ -1,7 +1,7 @@
 {
  "format": 1,
- "built": "2026-10-29 21:41",
- "source": "cand_1029b.arc",
+ "built": "2026-10-31 12:51",
+ "source": "cand_1031a.arc",
  "entries": [
   {
    "idx": 504,
@@ -53,8 +53,8 @@
    "name": "PL05_AI_SCRIPT_00.BIN",
    "stock_md5": "0706754c7c789b5d648b12e8d6ff4eaf",
    "stock_size": 741,
-   "md5": "58b7f91f7dd44d61bf88c427c0ae31fe",
-   "size": 1748,
+   "md5": "7caf95831010425293453e911272b6d7",
+   "size": 1756,
    "file": "entries/509.bin"
   },
   {
@@ -98,8 +98,8 @@
    "name": "PL0A_AI_SCRIPT_00.BIN",
    "stock_md5": "90f9155ee70d1ad5580cbcf08f7c5da4",
    "stock_size": 1269,
-   "md5": "f1b7ad3f866855228b813d74b3246b76",
-   "size": 1808,
+   "md5": "e64429e729fa4fc4f52771879f4762d4",
+   "size": 1824,
    "file": "entries/514.bin"
   },
   {
@@ -134,8 +134,8 @@
    "name": "PL0E_AI_SCRIPT_00.BIN",
    "stock_md5": "5e146d5f420dfa1dcee16765340c9433",
    "stock_size": 784,
-   "md5": "b9b4682ef6c08a0725d26fd4479509ae",
-   "size": 1348,
+   "md5": "9830abcedf34bf910b9515477c03397d",
+   "size": 1332,
    "file": "entries/518.bin"
   },
   {
@@ -179,8 +179,8 @@
    "name": "PL13_AI_SCRIPT_00.BIN",
    "stock_md5": "630d8c9ad652dab9fe6fc1034b854b5d",
    "stock_size": 727,
-   "md5": "5224f2258d9a3838c8be95dc5546aa5c",
-   "size": 1300,
+   "md5": "2a742926b9aa597cd2fc79046486f7c3",
+   "size": 1308,
    "file": "entries/523.bin"
   },
   {
@@ -188,8 +188,8 @@
    "name": "PL14_AI_SCRIPT_00.BIN",
    "stock_md5": "3030d277d87caef4065fe240c086cc8d",
    "stock_size": 701,
-   "md5": "8a53d79ad2465766f978c006c6e6238f",
-   "size": 1180,
+   "md5": "08cf7b1f0e6af99f1e2cba074728ccec",
+   "size": 1220,
    "file": "entries/524.bin"
   },
   {
@@ -197,8 +197,8 @@
    "name": "PL15_AI_SCRIPT_00.BIN",
    "stock_md5": "6e8f4e3aabe83f7c42a9fa3cdb3d6d32",
    "stock_size": 752,
-   "md5": "32d2a3b62a1d9bbe9948ddce1f8ce196",
-   "size": 1240,
+   "md5": "36a54eba7854c86b2a2e62ffcefc8c10",
+   "size": 1272,
    "file": "entries/525.bin"
   },
   {
@@ -287,8 +287,8 @@
    "name": "PL1F_AI_SCRIPT_00.BIN",
    "stock_md5": "d034fd7a788b59816b33b30c683a5849",
    "stock_size": 708,
-   "md5": "af265a9c85b1b0b7e961a14697871d93",
-   "size": 1436,
+   "md5": "c223952739769cb8d8dcb6af409cc26e",
+   "size": 1444,
    "file": "entries/535.bin"
   },
   {
@@ -314,8 +314,8 @@
    "name": "PL22_AI_SCRIPT_00.BIN",
    "stock_md5": "20fb038a886e005a6f45b102f7db3d73",
    "stock_size": 1925,
-   "md5": "9b262d934164dd5460de06556e33c209",
-   "size": 1720,
+   "md5": "3f134a98f41057505eaa5f79b0a15e5e",
+   "size": 1836,
    "file": "entries/538.bin"
   },
   {
@@ -368,8 +368,8 @@
    "name": "PL28_AI_SCRIPT_00.BIN",
    "stock_md5": "b13216c299f4b4464d034cf5d56a09d3",
    "stock_size": 2250,
-   "md5": "4a808affa76b99372dfb410c9b5d1116",
-   "size": 3132,
+   "md5": "fc9d7f7543ca86ce74d8313e4dcd0550",
+   "size": 3148,
    "file": "entries/544.bin"
   },
   {
@@ -440,8 +440,8 @@
    "name": "PL30_AI_SCRIPT_00.BIN",
    "stock_md5": "858f2c0bee348abfb2f51885dae4fb64",
    "stock_size": 671,
-   "md5": "c94004e58f8a277f9555e234cb1b5c85",
-   "size": 1072,
+   "md5": "934c9e32a09340fd63fe8d546d59a3e5",
+   "size": 1080,
    "file": "entries/552.bin"
   },
   {
@@ -494,8 +494,8 @@
    "name": "PL36_AI_SCRIPT_00.BIN",
    "stock_md5": "b33b870a56a150519a191901f2871ccc",
    "stock_size": 676,
-   "md5": "89ee87a8be0842cb9b01a006de0a9c83",
-   "size": 1152,
+   "md5": "8517239f4e5a0a51164fbd66e038d38c",
+   "size": 1160,
    "file": "entries/558.bin"
   },
   {
@@ -584,8 +584,8 @@
    "name": "PL05_AI_SCRIPT_01.BIN",
    "stock_md5": "caf0e9e78f49786f9fb0556f61d541fa",
    "stock_size": 938,
-   "md5": "192ea20cae24ea3927d02c8fe1283ee1",
-   "size": 1796,
+   "md5": "acd04e282d137a9e33a28039e7e3317b",
+   "size": 1804,
    "file": "entries/568.bin"
   },
   {
@@ -629,8 +629,8 @@
    "name": "PL0A_AI_SCRIPT_01.BIN",
    "stock_md5": "c05902a4557a676f77baaae394fa6ec7",
    "stock_size": 1297,
-   "md5": "2cfd0505dad7039c8a5e6d738d1227e9",
-   "size": 1592,
+   "md5": "a9c54ff91fea900c2662d2913c74cc40",
+   "size": 1608,
    "file": "entries/573.bin"
   },
   {
@@ -665,8 +665,8 @@
    "name": "PL0E_AI_SCRIPT_01.BIN",
    "stock_md5": "a97f7df0bc54d269349c34ceac6a0a32",
    "stock_size": 1762,
-   "md5": "254842ffae97fd204ac8c938cc8575f1",
-   "size": 2280,
+   "md5": "e0feaf37f82fab8d09ea4536e3710052",
+   "size": 2264,
    "file": "entries/577.bin"
   },
   {
@@ -710,8 +710,8 @@
    "name": "PL13_AI_SCRIPT_01.BIN",
    "stock_md5": "bbf78df477195179808732feb3686961",
    "stock_size": 1138,
-   "md5": "53f67754a1fec9d5f38c713837e97802",
-   "size": 1596,
+   "md5": "9c0c67e066ed411507a2dfe3b84ba767",
+   "size": 1604,
    "file": "entries/582.bin"
   },
   {
@@ -719,8 +719,8 @@
    "name": "PL14_AI_SCRIPT_01.BIN",
    "stock_md5": "8b9126db4bf1d936d649d2112d6113c8",
    "stock_size": 1019,
-   "md5": "b52edd2be4eecc6ee0ef90c5c296bd47",
-   "size": 1208,
+   "md5": "789f5bda171387082cbfe2b022b7b181",
+   "size": 1248,
    "file": "entries/583.bin"
   },
   {
@@ -728,8 +728,8 @@
    "name": "PL15_AI_SCRIPT_01.BIN",
    "stock_md5": "14ae82736c6ebfded10246f503d4d703",
    "stock_size": 1298,
-   "md5": "572dae519ea715573143b305e2d23c62",
-   "size": 1704,
+   "md5": "17bf5388289959bbc6d3ccefd8584640",
+   "size": 1736,
    "file": "entries/584.bin"
   },
   {
@@ -818,8 +818,8 @@
    "name": "PL1F_AI_SCRIPT_01.BIN",
    "stock_md5": "418c3e800edaee55d9ba75e956f99cc9",
    "stock_size": 1472,
-   "md5": "bbcc0d96860a905a8ee4d341a0ce7cc4",
-   "size": 2108,
+   "md5": "13105cd9a105c8b710a76bcc380fe9e5",
+   "size": 2116,
    "file": "entries/594.bin"
   },
   {
@@ -845,8 +845,8 @@
    "name": "PL22_AI_SCRIPT_01.BIN",
    "stock_md5": "652c74ee75c9480e784fbc6b56c7213c",
    "stock_size": 1081,
-   "md5": "01897e97609b733d9356376048b3d2a0",
-   "size": 1488,
+   "md5": "717529c585ea93f0ba507c449a106e57",
+   "size": 1604,
    "file": "entries/597.bin"
   },
   {
@@ -899,8 +899,8 @@
    "name": "PL28_AI_SCRIPT_01.BIN",
    "stock_md5": "0a0c57335f46a0c72238d5aa3411731c",
    "stock_size": 1209,
-   "md5": "6f9be8c36e31705ecd49fac5c687128d",
-   "size": 1844,
+   "md5": "d8399bf05d5036e9dd61dd3573279b3b",
+   "size": 1860,
    "file": "entries/603.bin"
   },
   {
@@ -971,8 +971,8 @@
    "name": "PL30_AI_SCRIPT_01.BIN",
    "stock_md5": "ec19b87ba9752fdc04f8c04b5d8df484",
    "stock_size": 1097,
-   "md5": "76a5a87c3e428393452de433978af21a",
-   "size": 1396,
+   "md5": "46716436e88c0da681887efa27e02eb6",
+   "size": 1404,
    "file": "entries/611.bin"
   },
   {
@@ -1025,8 +1025,8 @@
    "name": "PL36_AI_SCRIPT_01.BIN",
    "stock_md5": "ed8d5413c3942d581d24ec51f11b07a2",
    "stock_size": 1119,
-   "md5": "eb786b354b00c8bf9c41f3e158b8066c",
-   "size": 1584,
+   "md5": "decfa2d9e90e9f102111e245849df96f",
+   "size": 1592,
    "file": "entries/617.bin"
   },
   {
@@ -2159,8 +2159,8 @@
    "name": "PL05_AI_SCRIPT_04.BIN",
    "stock_md5": "571421264b5cf3496829957f8abb4860",
    "stock_size": 2561,
-   "md5": "318e2f0f05a0059f4e12c34dcee1705f",
-   "size": 3944,
+   "md5": "9c6dc63912f009520f05b2b0678222d9",
+   "size": 3979,
    "file": "entries/745.bin"
   },
   {
@@ -2204,8 +2204,8 @@
    "name": "PL0A_AI_SCRIPT_04.BIN",
    "stock_md5": "12936576f49f3cabba410a74debf0a78",
    "stock_size": 2161,
-   "md5": "6164401d60bb3a8af4b974ab9616b3f2",
-   "size": 3758,
+   "md5": "96764750405463d5ad1ec925c414125c",
+   "size": 4002,
    "file": "entries/750.bin"
   },
   {
@@ -2240,8 +2240,8 @@
    "name": "PL0E_AI_SCRIPT_04.BIN",
    "stock_md5": "b72c048959de72d0c16c2e5ab3fcf504",
    "stock_size": 1336,
-   "md5": "d06b34cdb14327b776d2ea3fda4a7333",
-   "size": 2936,
+   "md5": "785fbef42b11ffcb3b132af1bb9fbdc0",
+   "size": 2880,
    "file": "entries/754.bin"
   },
   {
@@ -2285,8 +2285,8 @@
    "name": "PL13_AI_SCRIPT_04.BIN",
    "stock_md5": "ad71a58658c9e371c48204cee6046cec",
    "stock_size": 2383,
-   "md5": "d2541cc3c6e0e5604ef0a7f9dc60b949",
-   "size": 3123,
+   "md5": "fa9bd1353a086f5007c2c49db033316b",
+   "size": 3188,
    "file": "entries/759.bin"
   },
   {
@@ -2294,8 +2294,8 @@
    "name": "PL14_AI_SCRIPT_04.BIN",
    "stock_md5": "936d0342a3ab99edee34a73e3e7f0efd",
    "stock_size": 2528,
-   "md5": "2086ef9ebf42fa9fb59b79faaa742433",
-   "size": 3512,
+   "md5": "c6bdd7a84f8a68a78df0066302b9f6bb",
+   "size": 3829,
    "file": "entries/760.bin"
   },
   {
@@ -2303,8 +2303,8 @@
    "name": "PL15_AI_SCRIPT_04.BIN",
    "stock_md5": "e9a50d98191bc86ee9aa537057fe1dd9",
    "stock_size": 2583,
-   "md5": "5128e65a8e13c92dd5478ca0fa3fd61f",
-   "size": 3693,
+   "md5": "9cbbe2662f0e93bb5fab8d1b62ec539f",
+   "size": 3937,
    "file": "entries/761.bin"
   },
   {
@@ -2420,8 +2420,8 @@
    "name": "PL22_AI_SCRIPT_04.BIN",
    "stock_md5": "dbb87fe75ab061b2b80500514621de28",
    "stock_size": 2386,
-   "md5": "f749e2fb9bc9d90a6f0106c1977f4355",
-   "size": 3607,
+   "md5": "1f5ec14a2eb3bfe90cf580210057b01d",
+   "size": 4021,
    "file": "entries/774.bin"
   },
   {
@@ -2474,8 +2474,8 @@
    "name": "PL28_AI_SCRIPT_04.BIN",
    "stock_md5": "a51a52cd7e30ebbab4c1feb6e1a53cea",
    "stock_size": 3083,
-   "md5": "e3a1452f4a6047dd45e9d8c2c2d24da8",
-   "size": 3648,
+   "md5": "67c5ff8a56b7974e145521e5528e64d7",
+   "size": 3802,
    "file": "entries/780.bin"
   },
   {
@@ -2546,8 +2546,8 @@
    "name": "PL30_AI_SCRIPT_04.BIN",
    "stock_md5": "87168337083e1f1efb2d09e6b339996f",
    "stock_size": 2552,
-   "md5": "f4e4cc1720e104193c43511addf23097",
-   "size": 3519,
+   "md5": "087133f3096c0696268d22a22f787335",
+   "size": 3666,
    "file": "entries/788.bin"
   },
   {
@@ -2600,8 +2600,8 @@
    "name": "PL36_AI_SCRIPT_04.BIN",
    "stock_md5": "67978961ab3274c289a76c7af864f4a9",
    "stock_size": 1419,
-   "md5": "4adfe0629d0512415fd697ecb7e820c7",
-   "size": 3163,
+   "md5": "7424f0455673a77d83abccaf1e0dc19a",
+   "size": 3293,
    "file": "entries/794.bin"
   },
   {

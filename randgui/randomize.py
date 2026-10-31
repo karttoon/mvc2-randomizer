@@ -897,7 +897,8 @@ def arcade_settings(log=None):
             "boss": "endless" if on and a["arcade_endless"] else "abyss",
             "stages": bool(on and a["arcade_stages"]), "stage_pool": sorted(C.STAGES),
             "max_rank": bool(on and a["arcade_max_rank"]),
-            "full_dmg": on}          # always: CPU deals/takes 100%, not stock's 75%
+            "full_dmg": on,          # always: CPU deals/takes 100%, not stock's 75%
+            "random_colors": on}     # always: each CPU fighter gets a random button colour
 
 
 def arcade_ai_wanted():

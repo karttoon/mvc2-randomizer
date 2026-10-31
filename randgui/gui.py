@@ -4028,9 +4028,9 @@ class App:
         wip.pack(anchor="w", fill="x", pady=(4, 6))
         ttk.Label(t, foreground="#555", justify="left", wraplength=W,
                   text="Makes Arcade mode a real challenge: smarter CPU opponents, "
-                       "real teams, shuffled stages and an endless tower - and the "
-                       "CPU deals and takes full damage (stock MvC2 gives it only "
-                       "75%). Only Arcade mode changes - versus and training play "
+                       "real teams in random colours, shuffled stages and an endless "
+                       "tower - and the CPU deals and takes full damage (stock MvC2 "
+                       "gives it only 75%). Only Arcade mode changes - versus and training play "
                        "as normal. Turn all of it on or off in the Home tab."
                   ).pack(anchor="w", pady=(0, 6))
         self.arc_off_lbl = ttk.Label(t, foreground="#b00020", justify="left", wraplength=W,
@@ -4133,8 +4133,10 @@ class App:
         self.arc_status_lbl = ttk.Label(r, text="Not running", foreground="#555")
         self.arc_status_lbl.pack(side="left", padx=(12, 0))
         ttk.Label(t, foreground="#777", justify="left", wraplength=W,
-                  text="Changes take effect the next time it starts (Stop, then "
-                       "Start). Everything it does is listed in the Logs tab."
+                  text="CPU team changes (lists, order, random) apply from the next "
+                       "fight, even mid-run. Other changes take effect the next time it "
+                       "starts (Stop, then Start). Everything it does is listed in the "
+                       "Logs tab."
                   ).pack(anchor="w", pady=(6, 0))
 
         self._arcade_fill_lists()
@@ -4149,11 +4151,23 @@ class App:
         else:
             self.arc_off_lbl.pack(anchor="w", pady=(0, 6), before=self.arc_sec1)
 
+    ARCADE_LIVE = ("arcade_teams", "arcade_team_source", "arcade_lists_off", "arcade_order")
+
     def _arcade_set(self, key, value):
         randomize.set_config_key(key, value)
-        if self._arcade_running() and key != "arcade_autostart":
+        if key in self.ARCADE_LIVE:
+            self._arcade_push_teams()
+        elif self._arcade_running() and key != "arcade_autostart":
             self.arc_status_lbl.config(text="Settings changed - Stop / Start to apply",
                                        foreground="#8a5a00")
+
+    def _arcade_push_teams(self):
+        """Hand changed CPU-team settings to the running companion: they apply
+        from the next fight, mid-run included."""
+        if self._arcade_running():
+            self._arcade.update(randomize.arcade_settings(log=self._arcade_log))
+            self.arc_status_lbl.config(text="Team changes apply from the next fight",
+                                       foreground="#2a7a2a")
 
     def _arcade_src_changed(self):
         v = self.arc_src_var.get()
@@ -4727,9 +4741,7 @@ class App:
             randomize.set_config_key("arcade_lists_off", off)
             self._arcade_fill_lists()
             self.logln(f"[Arcade] team lists saved ({len(lists)} lists)")
-            if self._arcade_running():
-                self.arc_status_lbl.config(text="Lists changed - Stop / Start to apply",
-                                           foreground="#8a5a00")
+            self._arcade_push_teams()
             dlg.destroy()
 
         lb.bind("<<ListboxSelect>>", on_pick)
