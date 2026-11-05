@@ -180,12 +180,18 @@ def merge(stock_pol, stock_tex, slot, port_pol, port_tex, draw_index=0, sort=Tru
                          f"only {sizes[victim]:,} - POL would outgrow the slot buffer")
 
     # switch the port's own meshes to DECAL shading (colour from texture alone),
-    # so a slot whose code writes a base colour into "its" model can't tint us
+    # so a slot whose code writes a base colour into "its" model can't tint us.
+    # Untextured meshes (texId -1, e.g. a flat sky panel) keep their shading:
+    # with decal they have no colour source and a Dreamcast draws nothing there
+    # (TVI's SFA2 Suzaku Castle lost its sky, 2026-11-05; Steam ignores it).
     j = 0
     while True:
         j = blob.find(PORT_MARK, j)
         if j < 0:
             break
+        if j + 8 <= len(blob) and struct.unpack_from("<I", blob, j + 4)[0] >= 0x80000000:
+            j += 4
+            continue
         to = j - 0x14
         struct.pack_into("<I", blob, to, struct.unpack_from("<I", blob, to)[0] & ~(3 << SHADE))
         j += 4

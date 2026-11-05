@@ -4379,8 +4379,9 @@ class App:
                 for m in msgs:
                     self.logln("[Updates] " + m)
                 if rc == 0:
-                    self._upd_results["cpu"] = {"newer": False, "installed": r["latest"]}
-                self._upd_show()
+                    self._upd_resolved("cpu", r["latest"])
+                else:
+                    self._upd_show()
                 self._arcade_pack_refresh()
                 self._arcade_ai_refresh()
             self.q.put(("call", done))
@@ -4489,9 +4490,16 @@ class App:
         else:
             self._upd_app_install(r)
 
+    def _upd_resolved(self, k, installed=None):
+        """An update was just downloaded and applied: clear its dot / status-bar
+        entry without needing another Check now."""
+        if k in getattr(self, "_upd_results", {}):
+            self._upd_results[k] = ({"newer": False, "installed": installed}
+                                    if installed else {"newer": False})
+            self._upd_show()
+
     def _upd_cpu_done(self, r):
-        self._upd_results["cpu"] = {"newer": False, "installed": r["latest"]}
-        self._upd_show()
+        self._upd_resolved("cpu", r["latest"])
         self._arcade_pack_refresh()
         self._arcade_ai_refresh()
 
@@ -4575,7 +4583,8 @@ class App:
                                f"Latest: {res['latest']}\nYou have: {res['current']}\n\n"
                                f"Download it now ({max(1, res['size'] // 1024)} KB)?"):
             self.run_job("Downloading the CPU pack", randomize.arcade_download_update,
-                         on_done=lambda: (self._arcade_pack_refresh(), self._arcade_ai_refresh()),
+                         on_done=lambda: (self._upd_resolved("cpu", res["latest"]),
+                                          self._arcade_pack_refresh(), self._arcade_ai_refresh()),
                          manifest=res["manifest"])
             self._select_tab("Logs")
 
@@ -5896,6 +5905,7 @@ class App:
                 return
 
     def _after_download(self):
+        self._upd_resolved("gallery")      # just downloaded: clear its update dot
         self._on_char_change()
         self._slot_fits = None             # new ports - recompute the fit map
         self._load_stage_gallery(force=True)
