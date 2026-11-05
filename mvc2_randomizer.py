@@ -1508,7 +1508,26 @@ def do_gallery_download(skins_dir):
         print(f"Stages: {s_added} files added/refreshed "
               f"({s_existed} already present"
               + (f", {s_removed} removed upstream" if s_removed else "") + ")")
+    _record_gallery_version(zip_data)
     return True
+
+
+def _record_gallery_version(zip_data):
+    """Remember which gallery commit this download was (GitHub writes the commit
+    id into the archive's zip comment) so the app's update check can tell what's
+    new since."""
+    import datetime
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+            sha = zf.comment.decode("ascii", "ignore").strip()
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(os.path.join(STATE_DIR, "gallery_version.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump({"sha": sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None,
+                       "downloaded": datetime.datetime.now(
+                           datetime.timezone.utc).isoformat()}, f)
+    except (OSError, zipfile.BadZipFile):
+        pass
 
 
 def build_parser():

@@ -24,6 +24,7 @@ import locks
 import stagegal
 import presets
 import activity
+import updates
 
 APP_TITLE = "MvC2 Randomizer"
 
@@ -78,6 +79,8 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(800, self._arcade_autostart)
         self.root.after(500, self._maybe_first_run)
+        self.root.after(3000, self._updates_cleanup)
+        self.root.after(4000, self._updates_launch)
 
     # ---------------------------------------------------------------- layout
     def _build_header(self):
@@ -151,6 +154,11 @@ class App:
         bar.pack(fill="x")
         self.busy_lbl = ttk.Label(bar, text="", foreground="#555")
         self.busy_lbl.pack(side="right", padx=(0, 10))
+        # "Updates ready" line: shown only when a check found something; a click
+        # opens Settings > Updates. No pop-ups.
+        self.upd_bar = tk.Label(bar, text="", fg="#9a6a00", cursor="hand2",
+                                font=("Segoe UI", 9, "bold"))
+        self.upd_bar.bind("<Button-1>", lambda e: self._updates_goto())
         self.pbar = ttk.Progressbar(bar, mode="indeterminate", length=160)
         # only shown while a job is running (a stopped indeterminate bar shows a
         # stray idle block, which looks like it's stuck ~1/10 full)
@@ -175,6 +183,9 @@ class App:
         ch = ttk.Button(t, text="Change game folder...", command=self.on_set_game)
         ch.pack(anchor="w", pady=(0, 4))
         self._action_widgets.append(ch)
+
+        ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
+        self._build_updates(t)
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
         ttk.Label(t, text="Auto-randomize on launch", font=("Segoe UI", 11, "bold")).pack(anchor="w")
@@ -1330,6 +1341,16 @@ class App:
             self._grid_sel = []           # decided: drop the selection badges
             for fn in targets:
                 self._grid_update_cell(fn, verdict)
+            if not self.unrev_var.get():
+                # not reviewing: just deselect - nothing else gets picked
+                old, self._grid_cur = getattr(self, "_grid_cur", None), None
+                for fn in set(targets) | {old}:
+                    if fn in self._grid_cells:
+                        self._grid_paint(fn)
+                self._grid_show_status()
+                self._update_compare_btn()
+                self.gal_canvas.focus_set()
+                return "break"
             self._grid_cur = targets[-1]
             self._grid_advance()          # step to the next unreviewed
             self.gal_canvas.focus_set()
@@ -1556,8 +1577,8 @@ class App:
         char = self._cur_char
         if not self.pal_files:
             return
-        verdicts = palettes.load_verdicts()
         cur = getattr(self, "_grid_cur", None)
+        verdicts = palettes.load_verdicts()
         start = (self.pal_files.index(cur) + 1) if cur in self.pal_files else 0
         for off in range(len(self.pal_files)):
             f = self.pal_files[(start + off) % len(self.pal_files)]
@@ -4232,6 +4253,283 @@ class App:
         self.run_job("Arcade (WIP): smarter CPU", randomize.arcade_apply_ai,
                      on_done=self._arcade_ai_refresh)
 
+    # ------------------------------------------------------------- updates
+    # Off by default: the app goes online only if "Check for updates when the
+    # app starts" is on, or on a click. Anything found shows as a gold dot on
+    # its tab plus one clickable line in the status bar - never a pop-up.
+    UPD_TABS = {"app": "Settings", "cpu": "Arcade (WIP)", "gallery": "Palette Gallery"}
+    UPD_NAMES = {"app": "App", "cpu": "CPU pack", "gallery": "Gallery"}
+
+    def _build_updates(self, t):
+        sec = ttk.Frame(t); sec.pack(fill="x")
+        self._upd_frame = sec
+        ttk.Label(sec, text="Updates", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        ttk.Label(sec, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
+                  text="Off unless you turn it on - until then the app only goes "
+                       "online when you click. When it's on, each time the app "
+                       "starts it quietly looks for the things you tick below. "
+                       "Anything new shows as a gold dot on its tab and a line at "
+                       "the bottom of the window; nothing pops up, and nothing is "
+                       "downloaded unless you click (or let CPU packs install "
+                       "automatically)."
+                  ).pack(anchor="w", pady=(2, 6))
+        st = updates.settings()
+        self.upd_on_var = tk.BooleanVar(value=st["on_launch"])
+        ttk.Checkbutton(sec, text="Check for updates when the app starts",
+                        variable=self.upd_on_var,
+                        command=self._upd_toggle).pack(anchor="w")
+        sub = ttk.Frame(sec); sub.pack(anchor="w", padx=(22, 0), pady=(2, 0))
+        self.upd_vars, self._upd_subs = {}, []
+        for k, txt in (("app", "New versions of the app"),
+                       ("cpu", "New Arcade CPU packs"),
+                       ("gallery", "New gallery content (palettes and stages)")):
+            v = tk.BooleanVar(value=st[k])
+            self.upd_vars[k] = v
+            cb = ttk.Checkbutton(sub, text=txt, variable=v,
+                                 command=lambda k=k: self._upd_set(k))
+            cb.pack(anchor="w")
+            self._upd_subs.append(cb)
+            if k == "cpu":
+                self.upd_auto_var = tk.BooleanVar(value=st["cpu_auto"])
+                self._upd_auto_cb = ttk.Checkbutton(
+                    sub, text="Install them automatically (well under 1 MB)",
+                    variable=self.upd_auto_var, command=self._upd_set_auto)
+                self._upd_auto_cb.pack(anchor="w", padx=(22, 0))
+        rows = ttk.Frame(sec); rows.pack(anchor="w", fill="x", pady=(8, 0))
+        self.upd_lbl, self.upd_btn = {}, {}
+        for i, k in enumerate(("app", "cpu", "gallery")):
+            self.upd_lbl[k] = ttk.Label(rows, text="", foreground="#555")
+            self.upd_lbl[k].grid(row=i, column=0, sticky="w", pady=1)
+            self.upd_btn[k] = ttk.Button(rows, text="", command=lambda k=k: self._upd_action(k))
+        rows.columnconfigure(0, minsize=520)
+        b = ttk.Button(sec, text="Check now", command=lambda: self._upd_check(manual=True))
+        b.pack(anchor="w", pady=(6, 0))
+        self._action_widgets.append(b)
+        self._upd_results = {}
+        self._upd_checking = False
+        self._upd_toggle(save=False)
+
+    def _upd_toggle(self, save=True):
+        on = bool(self.upd_on_var.get())
+        if save:
+            randomize.set_config_key(updates.ON_LAUNCH, on)
+            self.logln("Update check at launch " + ("on." if on else "off."))
+        for cb in self._upd_subs:
+            cb.state(["!disabled"] if on else ["disabled"])
+        self._upd_auto_cb.state(["!disabled"] if on and self.upd_vars["cpu"].get()
+                                else ["disabled"])
+
+    def _upd_set(self, k):
+        randomize.set_config_key(updates.KEYS[k], bool(self.upd_vars[k].get()))
+        self._upd_toggle(save=False)
+
+    def _upd_set_auto(self):
+        randomize.set_config_key(updates.CPU_AUTO, bool(self.upd_auto_var.get()))
+
+    def _updates_cleanup(self, tries=4):
+        if not updates.cleanup_old() and tries:
+            self.root.after(10000, lambda: self._updates_cleanup(tries - 1))
+
+    def _updates_launch(self):
+        st = updates.settings()
+        keys = [k for k in updates.KEYS if st[k]] if st["on_launch"] else []
+        if keys:
+            activity.log("Updates: checking at launch (" + ", ".join(keys) + ")")
+            self._upd_check(keys)
+        else:
+            self._upd_show()
+
+    def _upd_check(self, keys=None, manual=False):
+        if self._upd_checking:
+            return
+        keys = list(keys or updates.KEYS)
+        self._upd_checking = True
+        for k in keys:
+            self.upd_lbl[k].config(text=f"{self.UPD_NAMES[k]}: checking...",
+                                   foreground="#555")
+            self.upd_btn[k].grid_forget()
+
+        def work():
+            res = updates.check(keys)
+            self.q.put(("call", lambda: self._upd_checked(res, manual)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _upd_checked(self, res, manual):
+        self._upd_checking = False
+        self._upd_results.update(res)
+        found = [self.UPD_NAMES[k] for k, r in res.items() if r.get("newer")]
+        self.logln("Update check: " + (("new " + ", ".join(found)) if found
+                                      else "everything is up to date") + ".")
+        cpu = res.get("cpu") or {}
+        if cpu.get("newer") and updates.settings()["cpu_auto"] and not self.busy:
+            self._upd_cpu_auto(cpu)
+        self._upd_show()
+
+    def _upd_cpu_auto(self, r):
+        """Install a newer CPU pack without asking (the user ticked that box)."""
+        self._set_busy(True, "Getting the new CPU pack")
+
+        def work():
+            msgs = []
+            rc = randomize.arcade_download_update(progress=msgs.append,
+                                                  manifest=r["manifest"])
+
+            def done():
+                self._set_busy(False)
+                for m in msgs:
+                    self.logln("[Updates] " + m)
+                if rc == 0:
+                    self._upd_results["cpu"] = {"newer": False, "installed": r["latest"]}
+                self._upd_show()
+                self._arcade_pack_refresh()
+                self._arcade_ai_refresh()
+            self.q.put(("call", done))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _upd_text(self, k):
+        """(label, colour, button text or None) for one update row."""
+        r = self._upd_results.get(k)
+        name = self.UPD_NAMES[k]
+        if k == "app":
+            have = f"v{config.VERSION}"
+        elif k == "cpu":
+            try:
+                have = randomize.arcade_pack_info()["built"] or "?"
+            except Exception:
+                have = "?"
+        else:
+            g = updates.gallery_local() or {}
+            have = ("downloaded " + g["downloaded"][:10]) if g.get("downloaded") else ""
+        if r is None:
+            return (f"{name}: {have}" if have else name), "#777", None
+        if r.get("error"):
+            return f"{name}: couldn't check - {r['error']}", "#8a5a00", None
+        if r.get("installed"):
+            return (f"{name}: {r['installed']} downloaded - it goes into your game on "
+                    "the next Randomize / launch", "#2a7a2a", None)
+        if not r.get("newer"):
+            return (f"{name}: {have} - up to date" if have
+                    else f"{name}: up to date"), "#2a7a2a", None
+        if k == "app":
+            btn = "Update && restart" if updates.can_self_update() else "Open download page"
+            return f"App: v{r['latest']} is out (you have {have})", "#9a6a00", btn
+        if k == "cpu":
+            return (f"CPU pack: {r['latest']} is out (you have {have})", "#9a6a00",
+                    f"Download ({max(1, r.get('size', 0) // 1024)} KB)")
+        if r.get("first"):
+            return "Gallery: not downloaded yet", "#9a6a00", "Download (~750 MB)"
+        what = []
+        if r.get("palettes"):
+            what.append(f"{r['palettes']}{'+' if r.get('capped') else ''} new palettes")
+        if r.get("stages"):
+            what.append("stage updates")
+        return ("Gallery: new content since your download"
+                + (" - " + ", ".join(what) if what else "")
+                + f" (as of {r['latest']})", "#9a6a00", "Download (~750 MB)")
+
+    def _upd_show(self):
+        if not hasattr(self, "upd_lbl"):
+            return
+        pending = []
+        for i, k in enumerate(("app", "cpu", "gallery")):
+            txt, col, btn = self._upd_text(k)
+            self.upd_lbl[k].config(text=txt, foreground=col)
+            if btn:
+                self.upd_btn[k].config(text=btn)
+                self.upd_btn[k].grid(row=i, column=1, sticky="w", padx=(8, 0), pady=1)
+                r = self._upd_results[k]
+                pending.append("App " + r["latest"] if k == "app" else self.UPD_NAMES[k])
+            else:
+                self.upd_btn[k].grid_forget()
+        self._upd_badges(pending)
+
+    def _upd_dot_img(self):
+        if getattr(self, "_upd_dot", None) is None:
+            im = PILImage.new("RGBA", (40, 40), (0, 0, 0, 0))
+            ImageDraw.Draw(im).ellipse((2, 2, 37, 37), fill=(232, 176, 32, 255))
+            self._upd_dot = ImageTk.PhotoImage(im.resize((10, 10), PILImage.LANCZOS))
+        return self._upd_dot
+
+    def _upd_badges(self, pending):
+        """Gold dot on each tab with something new + the status-bar line."""
+        want = {self.UPD_TABS[k] for k, r in self._upd_results.items() if r.get("newer")}
+        for tab in self.nb.tabs():
+            on = any(self.nb.tab(tab, "text").endswith(w) for w in want)
+            self.nb.tab(tab, image=self._upd_dot_img() if on else "", compound="right")
+        if pending:
+            self.upd_bar.config(text="✨ Updates ready: " + " · ".join(pending)
+                                + "   (click to see)")
+            self.upd_bar.pack(side="left")
+        else:
+            self.upd_bar.pack_forget()
+
+    def _updates_goto(self):
+        """Status-bar click: Settings, scrolled to the Updates section."""
+        self._select_tab("Settings")
+        self.root.update_idletasks()
+        inner = self._upd_frame.master.master
+        try:
+            inner.master.yview_moveto(max(0.0, (self._upd_frame.winfo_y() - 8)
+                                          / max(1, inner.winfo_height())))
+        except tk.TclError:
+            pass
+
+    def _upd_action(self, k):
+        r = self._upd_results.get(k) or {}
+        if k == "gallery":
+            self.on_download()
+        elif k == "cpu":
+            self.run_job("Downloading the CPU pack", randomize.arcade_download_update,
+                         on_done=lambda: self._upd_cpu_done(r), manifest=r["manifest"])
+            self._select_tab("Logs")
+        elif not updates.can_self_update():
+            import webbrowser
+            webbrowser.open(r.get("page") or
+                            "https://github.com/karttoon/mvc2-randomizer/releases/latest")
+        else:
+            self._upd_app_install(r)
+
+    def _upd_cpu_done(self, r):
+        self._upd_results["cpu"] = {"newer": False, "installed": r["latest"]}
+        self._upd_show()
+        self._arcade_pack_refresh()
+        self._arcade_ai_refresh()
+
+    def _upd_app_install(self, r):
+        msg = (f"Update the app to v{r['latest']}?\n\nIt downloads the new version "
+               f"({r['asset']['size'] / 1048576:.0f} MB), checks it, replaces this "
+               "one and restarts. Your settings, reviews and locks carry over.")
+        if self._arcade_running():
+            msg += "\n\nArcade stops while the app restarts - it starts again on its own " \
+                   "if you have it set to."
+        if not messagebox.askyesno("Update the app", msg):
+            return
+        self._upd_app_ok = False
+
+        def work(progress=None, status=None):
+            rc = updates.install_app(r["asset"], progress=progress, status=status)
+            self._upd_app_ok = rc == 0
+            return rc
+        self.run_job(f"Updating the app to v{r['latest']}", work,
+                     on_done=self._upd_app_done)
+        self._select_tab("Logs")
+
+    def _upd_app_done(self):
+        if not self._upd_app_ok:
+            return
+        if self._arcade_running():
+            self._arcade.stop()
+            self._arcade.join(timeout=3)
+        activity.log("Updates: restarting into the new app")
+        try:
+            updates.relaunch()
+        except OSError as e:
+            activity.error("app relaunch", e)
+            messagebox.showinfo("Update the app", "The new version is installed. "
+                                "Close this window and start the app again.")
+            return
+        self.root.destroy()
+
     # -- CPU pack updates (network only on these button clicks)
     def _arcade_pack_refresh(self):
         try:
@@ -5762,7 +6060,7 @@ class App:
             except ValueError:
                 messagebox.showerror("Bad seed", "Seed must be a whole number.")
                 return
-        self.run_job("Randomizing palettes", randomize.randomize,
+        self.run_job("Randomizing", randomize.randomize,
                      on_done=self._announce_new_protected, **kwargs)
 
     def _reset_selection(self):

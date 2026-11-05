@@ -60,6 +60,11 @@ every CPU hit to 75%). These fights are a real challenge now - and a lot of fun.
 - **CPU updates** - the CPU keeps improving between app releases. **Check for CPU pack
   updates** (Arcade tab, or Settings > Content) shows whether a newer CPU is out and
   downloads it if you say so - the app never goes online unless you click.
+- **Update checks (optional, off by default)** - **Settings > Updates** can check for a new
+  app version, CPU pack and gallery content each time the app starts (each one on or off).
+  Anything new shows as a gold dot on its tab and a line at the bottom of the window - no
+  pop-ups. The app can update itself in one click (it checks the download's fingerprint
+  first), and CPU packs can install automatically.
 
 ![Arcade tab](docs/images/arcade.png)
 

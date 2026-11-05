@@ -9,7 +9,7 @@ import os, sys, subprocess
 
 # Single source of truth for the app version (shown in the GUI, used for
 # release tags). Bump this when cutting a new version.
-VERSION = "1.0.10"
+VERSION = "1.0.11"
 
 
 def app_dir():
@@ -66,6 +66,10 @@ BACKUP_ARC = os.path.join(BACKUP_DIR, "game_50.original.arc")
 BACKUP_JSON = os.path.join(BACKUP_DIR, "backup.json")
 GAME_CHECK_JSON = os.path.join(STATE, "game_check.json")
 ARCADE_PACK_DIR = os.path.join(STATE, "arcade_pack")    # a downloaded CPU pack
+GALLERY_VERSION_JSON = os.path.join(STATE, "gallery_version.json")   # last gallery download
+# Settings > Updates (only when the user turns it on, or clicks)
+APP_RELEASE_API = "https://api.github.com/repos/karttoon/mvc2-randomizer/releases/latest"
+GALLERY_API = "https://api.github.com/repos/karttoon/mvc2-skins/"
 # Where new CPU packs are published - a GitHub release whose files are replaced
 # on each update, so these URLs never change. Only fetched when the user clicks.
 ARCADE_PACK_BASE = ("https://github.com/karttoon/mvc2-randomizer/releases/download/"
