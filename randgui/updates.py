@@ -76,8 +76,8 @@ def _download(url, size, status=None):
 def install_app(asset, progress=None, status=None):
     """Download the new exe, check it against GitHub's SHA-256, and swap it in
     place of the running one (same name, so a Steam launch option keeps
-    working). The running exe is renamed to .old (Windows allows that) and
-    deleted on the next start. Returns 0 when the new exe is in place."""
+    working). The running exe is renamed to <exe>.<its version>.old (Windows
+    allows that) and kept as a rollback copy - only the newest one is kept. Returns 0 when the new exe is in place."""
     say = progress or print
     exe = sys.executable
     randomize._engine()
@@ -103,7 +103,7 @@ def install_app(asset, progress=None, status=None):
         activity.log("Updates: app download REJECTED (sha256/size mismatch)")
         say("The download didn't match the published fingerprint - nothing was changed.")
         return 1
-    new, old = exe + ".new", exe + ".old"
+    new, old = exe + ".new", f"{exe}.{config.VERSION}.old"
     try:
         with open(new, "wb") as f:
             f.write(blob)
@@ -141,12 +141,36 @@ def relaunch():
                      creationflags=0x00000008 | 0x00000200)   # detached, new group
 
 
+def _old_copies():
+    """[(version tuple, path)] of the versioned rollback copies next to the exe."""
+    exe = sys.executable
+    d, base = os.path.dirname(exe), os.path.basename(exe)
+    out = []
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return out
+    for n in names:
+        if n.startswith(base + ".") and n.endswith(".old") and n != base + ".old":
+            ver = n[len(base) + 1:-4]
+            try:
+                out.append((tuple(int(x) for x in ver.split(".")), os.path.join(d, n)))
+            except ValueError:
+                continue
+    return sorted(out)
+
+
 def cleanup_old():
-    """Remove the previous exe left by an update (it may still be closing)."""
+    """Tidy what an update leaves behind: a half-written .new, the pre-1.0.13
+    unversioned .old, and all but the newest versioned rollback copy
+    (<exe>.<version>.old). The just-replaced exe may still be closing, so
+    this is retried."""
     if not can_self_update():
         return True
     done = True
-    for p in (sys.executable + ".old", sys.executable + ".new"):
+    stale = [sys.executable + ".old", sys.executable + ".new"]
+    stale += [p for _v, p in _old_copies()[:-1]]
+    for p in stale:
         if os.path.exists(p):
             try:
                 os.remove(p)

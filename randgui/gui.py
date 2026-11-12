@@ -4697,7 +4697,11 @@ class App(onboard.OnboardMixin):
             messagebox.showinfo("Update the app", "The new version is installed. "
                                 "Close this window and start the app again.")
             return
-        self.root.destroy()
+        # Close on the next turn of the event loop: this runs as a job's
+        # on_done callback, and the job runner still refreshes the window
+        # after it returns (destroying it here raised "invalid command name").
+        self._closing = True
+        self.root.after(50, self.root.destroy)
 
     # -- CPU pack updates (network only on these button clicks)
     def _arcade_pack_refresh(self):
@@ -6085,7 +6089,8 @@ class App(onboard.OnboardMixin):
                     cb, self._job_on_done = getattr(self, "_job_on_done", None), None
                     if cb:
                         cb()
-                    self.refresh_status()
+                    if not getattr(self, "_closing", False):
+                        self.refresh_status()
                 elif kind == "arcade_status":
                     self._arcade_show_status(payload)
                 elif kind == "home_check":
