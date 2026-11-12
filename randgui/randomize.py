@@ -281,6 +281,9 @@ def verify_mix():
                  base_color=cfg.get("fx_global_color") or None,
                  gradient=cfg.get("fx_gradient") or "Normal",
                  neon=cfg.get("fx_neon_color") or "Auto")
+    for cid in STEAM_PALETTE_OFFSETS:           # imported effect colours win
+        if cid not in skip:
+            eng.apply_custom_fx(work, cid)
     # which sheet owns each entry, for readable messages
     owner = {}
     for name, d in tg.items():
@@ -379,7 +382,61 @@ def mark_protected_notified():
         pass
 
 
+FIT_CACHE = "slot_fits.json"
+
+
+def _fit_sig():
+    """Fingerprint of everything the fit map depends on: the port files
+    (name, size, mtime, imported) and the app version (merge rules)."""
+    import stagegal
+    sig = [config.VERSION]
+    for title, vs in stagegal.sections():
+        if not title.startswith("Ports"):
+            continue
+        for v in vs:
+            row = [v["key"], bool(v.get("imported"))]
+            for p in (v.get("pol_path"), v.get("tex_path")):
+                try:
+                    st = os.stat(p) if p else None
+                except OSError:
+                    st = None
+                row += [st.st_size, int(st.st_mtime)] if st else [0, 0]
+            sig.append(row)
+    return sig
+
+
+def stage_fit_cached():
+    """(fit, why) from the on-disk cache if it still matches, else None."""
+    try:
+        with open(os.path.join(config.STATE, FIT_CACHE), encoding="utf-8") as f:
+            d = json.load(f)
+        if d.get("sig") != json.loads(json.dumps(_fit_sig())):
+            return None
+        return ({k: set(v) for k, v in d["fit"].items()}, d["why"])
+    except Exception:
+        return None
+
+
 def stage_fit_detail():
+    """stage_fit_detail_compute(), cached on disk (data/slot_fits.json) -
+    the full check trial-merges every port into every slot (seconds), so it
+    only reruns when the port files or the app version change."""
+    hit = stage_fit_cached()
+    if hit is not None:
+        return hit
+    sig = _fit_sig()
+    fit, why = stage_fit_detail_compute()
+    if fit:
+        try:
+            with open(os.path.join(config.STATE, FIT_CACHE), "w", encoding="utf-8") as f:
+                json.dump({"sig": sig, "fit": {k: sorted(v) for k, v in fit.items()},
+                           "why": why}, f)
+        except OSError:
+            pass
+    return fit, why
+
+
+def stage_fit_detail_compute():
     """(fit, why) for cross-slot ports, computed exactly as the engine does at
     randomize (natural repack, folding down to the slot's texture-record limit
     when needed, then the two-axis fit check).
@@ -407,6 +464,10 @@ def stage_fit_detail():
             pol, tex = v.get("pol_path"), v.get("tex_path")
             if not (pol and tex):
                 never[v["key"]] = "no POL file - Training only"
+                continue
+            if v.get("imported"):
+                never[v["key"]] = ("imported from a game file - stays in the slot "
+                                   "it came from")
                 continue
             try:
                 if not engine.is_pipeline_port(pol):

@@ -461,6 +461,76 @@ def apply_skin(rom, char_id, button_idx, skin_path):
 
 
 
+
+def apply_body_extras(rom, cid):
+    """Write the palette entries derived from a character's body palettes
+    (EXTRAS_BODY_ENTRIES animation frames, EXTRAS_SLOT_ENTRIES like rockets),
+    after skins were applied."""
+    if cid in EXTRAS_BODY_ENTRIES:
+        btn_body_cache = {}
+        lum_cache = {}
+        for entry in EXTRAS_BODY_ENTRIES[cid]:
+            entry_idx, btn_idx = entry[0], entry[1]
+            lum = entry[2] if len(entry) > 2 else None
+            # Shared entries (btn_idx=None) use LP (button 0) body palette
+            pal_btn = btn_idx if btn_idx is not None else 0
+            if pal_btn not in btn_body_cache:
+                btn_body_cache[pal_btn] = read_palette(rom, cid, pal_btn, 0)
+            colors = btn_body_cache[pal_btn]
+            if lum:
+                cache_key = (pal_btn, lum)
+                if cache_key not in lum_cache:
+                    lum_cache[cache_key] = adjust_luminance(colors, lum)
+                colors = lum_cache[cache_key]
+            write_palette_at(rom, cid, entry_idx, colors)
+    if cid in EXTRAS_SLOT_ENTRIES:
+        slot_cache = {}
+        for entry_idx, btn_idx, segments in EXTRAS_SLOT_ENTRIES[cid]:
+            pal_btn = btn_idx if btn_idx is not None else 0
+            colors = [(0, 0, 0)] * 16
+            for seg_start, seg_end, src_slot in segments:
+                key = (pal_btn, src_slot)
+                if key not in slot_cache:
+                    slot_cache[key] = read_palette(rom, cid, pal_btn, src_slot)
+                colors[seg_start:seg_end] = slot_cache[key][seg_start:seg_end]
+            write_palette_at(rom, cid, entry_idx, colors)
+
+
+def custom_fx_path(cid):
+    folder = CHAR_ID_TO_FOLDER.get(cid, safe_name(CHARACTERS[cid]))
+    return os.path.join(CUSTOM_DIR, "fx", folder + ".json")
+
+
+def load_custom_fx(cid):
+    """{entry index: 32 raw bytes} of effect colours imported from a game file
+    (custom/fx/<Character>.json), or {}."""
+    try:
+        with open(custom_fx_path(cid), encoding="utf-8") as f:
+            d = json.load(f)
+        out = {}
+        for k, v in (d.get("entries") or {}).items():
+            b = bytes.fromhex(v)
+            if len(b) == 32:
+                out[int(k)] = b
+        return out
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def apply_custom_fx(rom, cid):
+    """Write imported effect colours over whatever skins/FX produced. Returns
+    the number of entries written."""
+    ent = load_custom_fx(cid)
+    if not ent:
+        return 0
+    base = STEAM_PALETTE_OFFSETS[cid]
+    n = TOTAL_PALETTE_COUNT[cid]
+    for e, b in ent.items():
+        if 0 <= e < n:
+            rom[base + e * 32:base + e * 32 + 32] = b
+    return len(ent)
+
+
 # --------------------------------------------------------------------------
 # Palette state: protecting external edits (e.g. PalMod)
 #
@@ -727,6 +797,14 @@ def build_stage_pools(manifest, stages_dir):
     # variant whose TEX size doesn't match that slot is refused for the same
     # reason (a mislabeled full stage would crash the game).
     cdir = os.path.join(CUSTOM_DIR, "stages")
+    # Stages imported from a game file (the app's Import) record where they
+    # came from. Their bytes may be a merge already made for that one slot,
+    # so they never move: no cross-slot distribution.
+    try:
+        with open(os.path.join(cdir, "imported.json"), encoding="utf-8") as fh:
+            imported_bases = set(json.load(fh))
+    except (OSError, ValueError):
+        imported_bases = set()
     if os.path.isdir(cdir):
         groups = {}
         for f in sorted(os.listdir(cdir)):
@@ -749,6 +827,8 @@ def build_stage_pools(manifest, stages_dir):
             variant = {"key": f"u_{slot}_{name}", "name": name,
                        "author": "you", "kind": "custom",
                        "tex": files["tex"], "pol": files.get("pol")}
+            if f"{slot}_{name}" in imported_bases:
+                variant["imported"] = True
             if slot == "XX":
                 if not files.get("pol"):
                     print(f"  Warning: custom stage XX_{name} skipped - "
@@ -1020,7 +1100,8 @@ def randomize_stages(rom, stages_dir, quiet, dry_run, only_selected=False,
         # Repack every mergeable port at its NATURAL atlas count once (cached on
         # disk). Most slots allow 7-16 records and ports pack into 2-4, so this
         # is all a slot needs; tight slots (STG03/0C, 4 records) fold down below.
-        builds = [p for p in ports if p.get("pol") and is_pipeline_port(p["pol"])]
+        builds = [p for p in ports if p.get("pol") and is_pipeline_port(p["pol"])
+                  and not p.get("imported")]     # imports stay in their slot
         for p in builds:
             rp = repacked_port(p["pol"], p["tex"], repack_cache)
             eligible_ports.append((p, rp))     # rp None: may still fit some slots as is
@@ -1856,39 +1937,12 @@ def main():
             run_log.append("")
             total_assigned += 1
 
-            # Write body palettes to extras animation frame entries
-            if any_applied and not args.dry_run and cid in EXTRAS_BODY_ENTRIES:
-                btn_body_cache = {}
-                lum_cache = {}
-                for entry in EXTRAS_BODY_ENTRIES[cid]:
-                    entry_idx, btn_idx = entry[0], entry[1]
-                    lum = entry[2] if len(entry) > 2 else None
-                    # Shared entries (btn_idx=None) use LP (button 0) body palette
-                    pal_btn = btn_idx if btn_idx is not None else 0
-                    if pal_btn not in btn_body_cache:
-                        btn_body_cache[pal_btn] = read_palette(rom, cid, pal_btn, 0)
-                    colors = btn_body_cache[pal_btn]
-                    if lum:
-                        cache_key = (pal_btn, lum)
-                        if cache_key not in lum_cache:
-                            lum_cache[cache_key] = adjust_luminance(colors, lum)
-                        colors = lum_cache[cache_key]
-                    write_palette_at(rom, cid, entry_idx, colors)
-
-            # Write extras derived from specific palette slots (e.g. rockets)
-            if any_applied and not args.dry_run and cid in EXTRAS_SLOT_ENTRIES:
-                slot_cache = {}
-                for entry_idx, btn_idx, segments in EXTRAS_SLOT_ENTRIES[cid]:
-                    pal_btn = btn_idx if btn_idx is not None else 0
-                    colors = [(0, 0, 0)] * 16
-                    for seg_start, seg_end, src_slot in segments:
-                        key = (pal_btn, src_slot)
-                        if key not in slot_cache:
-                            slot_cache[key] = read_palette(
-                                rom, cid, pal_btn, src_slot)
-                        colors[seg_start:seg_end] = (
-                            slot_cache[key][seg_start:seg_end])
-                    write_palette_at(rom, cid, entry_idx, colors)
+            # Body-derived extras (animation frames, rockets...) follow the new skins.
+            if any_applied and not args.dry_run:
+                apply_body_extras(rom, cid)
+            # Effect colours imported from a game file win over the derived ones.
+            if not args.dry_run:
+                apply_custom_fx(rom, cid)
 
             # Remember what we wrote so later external edits can be detected.
             if not args.dry_run:
@@ -1972,6 +2026,10 @@ def main():
                                neon=config.get("fx_neon_color") or "Auto")
             for k in applied:
                 touched.add(int(k))
+            # Imported effect colours win over any mode or lock.
+            for cid2 in STEAM_PALETTE_OFFSETS:
+                if cid2 not in skip_fx and (char_filter_id is None or cid2 == char_filter_id)                         and apply_custom_fx(rom, cid2):
+                    touched.add(cid2)
             if changed:
                 print(f"FX: recolored {changed} effect sheet(s)"
                       f" [{fx_mode}{', +locks' if fx_locks else ''}]")

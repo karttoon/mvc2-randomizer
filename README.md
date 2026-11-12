@@ -82,39 +82,102 @@ The live Arcade features run alongside the game, so keep the app open while you 
    [latest release](https://github.com/karttoon/mvc2-randomizer/releases/latest) and put it in a
    folder of its own - it keeps its settings in a `data` folder next to it.
 2. Run it. First-time setup finds your game, backs up your game file, and shows what's
-   already different from the stock game.
+   already different from the stock game. If your game is already modded (PalMod colours,
+   stage mods, an earlier randomizer), leave **Import my custom colours and stages** ticked -
+   see [Already modded?](#already-modded-import-your-custom-content).
 
    ![First-time setup](docs/images/first-run.png)
 
-3. Choose what to change - palettes, stages, FX colors, Arcade. Everything starts off.
-4. For palettes or stages, download the archive: **Settings > Content > Download / Update
-   gallery content** (about 750 MB; an update downloads it again in full).
-5. Click **Randomize now** on the Home tab - or use **Settings > Enable Auto-Randomize in
-   Steam** to add a launch option, and every Play from Steam applies your settings
-   before the game starts.
+3. Pick a starting point, or switch parts on and off yourself:
+   - **Shuffle everything** - new colours and stages every time; lock anything you want to keep.
+   - **Just add stages - keep my colours** - your colours stay exactly as they are.
+   - **I'll pick everything myself** - everything starts off and nothing in your game
+     changes. Pick palettes and stages in the galleries, then switch Palettes / Stages on.
+
+   ![What to change](docs/images/first-run-choose.png)
+
+4. The **Getting started** checklist at the top of the Home tab shows what's left, with a
+   button for each step:
+   - **Download** the gallery - the community palettes and stages, about 750 MB, not
+     included in the app. Progress shows at the bottom of the window, and you can keep
+     using the app while it runs.
+   - Optionally start from a **curated list** of hand-picked palettes, so you don't have to
+     review thousands yourself. It only marks palettes as Keep; your own locks stay.
+   - **Apply to game** writes your settings into the game. Nothing changes until you do.
+   - Optionally **Set up...** the Steam launch option, so every Play from Steam applies your
+     settings before the game starts.
+
+   (That's the Home tab at the top of this page.)
+
+Random is optional: anything you lock (a palette on a button, a stage in a slot) stays put,
+and only unlocked things change. Random picks come from what you've **Kept** in the
+galleries - plus everything you haven't reviewed yet when **Settings > Randomize pool**
+includes it (the Shuffle and Just-add-stages starting points turn that on).
 
 ## Your game stays safe
 
 Before changing anything, the app saves a copy of your game file exactly as it was.
 **Home > Restore** puts back that original file, the stock game, or just some parts
 (palettes, FX colors, stages, CPU). Anything you switch off is left exactly as it is,
-and edits made with other tools (e.g. PalMod) are detected and protected.
+and edits made with other tools (e.g. PalMod) are detected and left alone until you import them.
 
 ![Restore](docs/images/restore.png)
 
 Files changed by *other* tools can only be reset by Steam: right-click the game >
 Properties > Installed Files > **Verify integrity of game files**.
 
+## Your own palettes and stages
+
+### Already modded? Import your custom content
+
+Tick the box in first-time setup, or use **Home > Import custom content...** any time. The
+app reads your game (or your original game file, or someone else's `game_50.arc`) and saves
+what it finds as files it manages, locked where they are:
+
+- **Palettes** go to `custom\skins\<Character>\` as gallery-format sheets, locked to the
+  button they were on.
+- **Hand-edited effect colours** go to `custom\fx\` and are put back on every apply.
+- **Stages** go to `custom\stages\`, locked to their slot.
+
+Your game looks exactly the same after the next apply - and from then on you can mix, swap
+and share it all like gallery content.
+
+**Matching to the gallery.** Anything you import that's really a gallery item - even with FX
+colours on top - becomes that gallery item, with its name and preview, still locked where it
+was. This runs by itself after every gallery download; **Settings > Match my own files to the
+gallery** runs it again after you add files of your own.
+
+**Imported stages stay in their slot.** A stage taken from a game file can be a version made
+for that one slot (a ported stage merged into Abyss, say), so it's only offered in the slot it
+came from. Stages without a preview get a card that says what they are:
+
+![Your imported stages](docs/images/stage-gallery-yours.png)
+
+**Unique to me** (in both galleries) shows only what's yours and not in the gallery.
+
+### Adding your own files
+
+- **Palette sheets** go in `custom\skins\<Character>\` (the folders are created for you), or
+  use **Add my own palettes...** in the Palette Gallery, which checks each sheet and files it
+  under the right character. A sheet must be the gallery format: an indexed PNG with that
+  character's exact layout.
+- **Stage files** (POL/TEX `.BIN`) go in `custom\stages\`, or use **Add my own stage
+  files...** in the Stage Gallery.
+
 ## Locks, mixes and sharing
 
 - **Locks** - pin a palette to a character's button, or a stage to a slot, so it never
-  changes.
+  changes. On the Locks tab your own stages are marked ★ at the top of each slot's list.
+- **Cross-slot stages** (Settings, on by default) - ported and original stages can go in any
+  slot they fit, not just Training.
 - **Your mix** - pick the six palettes you want for a character (one per button) right in
   the Palette Gallery.
 - **Export game file** (Home) - save your finished game file for someone who just wants
   to drop it in, no app needed.
 - **Curated mixes** (Settings) - share your keeps, rejects, locks, playlists and FX setup,
   or start from someone else's.
+
+![Locks tab - stage slots](docs/images/locks-stages.png)
 
 ## Something wrong?
 

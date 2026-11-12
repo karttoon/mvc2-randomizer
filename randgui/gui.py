@@ -25,11 +25,12 @@ import stagegal
 import presets
 import activity
 import updates
+import onboard
 
 APP_TITLE = "MvC2 Randomizer"
 
 
-class App:
+class App(onboard.OnboardMixin):
     def __init__(self, root):
         self.root = root
         self.q = queue.Queue()
@@ -81,6 +82,9 @@ class App:
         self.root.after(500, self._maybe_first_run)
         self.root.after(3000, self._updates_cleanup)
         self.root.after(4000, self._updates_launch)
+        # warm the cross-slot fit map (disk-cached; computed in the background
+        # the first time) so the Locks tab opens instantly
+        self.root.after(6000, self._slock_populate)
 
     # ---------------------------------------------------------------- layout
     def _build_header(self):
@@ -151,8 +155,11 @@ class App:
 
     def _build_statusbar(self):
         bar = ttk.Frame(self.root, padding=(14, 2, 14, 8))
-        bar.pack(fill="x")
-        self.busy_lbl = ttk.Label(bar, text="", foreground="#555")
+        # bottom-anchored before the tabs, so it never ends up below the
+        # screen edge when the window is taller than the display
+        bar.pack(fill="x", side="bottom", before=self.nb)
+        self.busy_lbl = ttk.Label(bar, text="", foreground="#6b4e00",
+                                  font=("Segoe UI", 9, "bold"))
         self.busy_lbl.pack(side="right", padx=(0, 10))
         # "Updates ready" line: shown only when a check found something; a click
         # opens Settings > Updates. No pop-ups.
@@ -188,14 +195,14 @@ class App:
         self._build_updates(t)
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
-        ttk.Label(t, text="Auto-randomize on launch", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        ttk.Label(t, text="Apply on every Steam launch", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
                   text="A one-time setup: this copies a short line to your "
                        "clipboard and shows where to paste it in Steam. After "
                        "that, your palettes are randomized automatically every "
                        "time you launch the game."
                   ).pack(anchor="w", pady=(2, 6))
-        b = ttk.Button(t, text="Enable Auto-Randomize in Steam",
+        b = ttk.Button(t, text="Set up the Steam launch option...",
                        command=self.on_enable_steam)
         b.pack(anchor="w")
         self._action_widgets.append(b)
@@ -254,6 +261,18 @@ class App:
                         command=self._arcade_pack_check)
         cp.pack(side="left", padx=(8, 0))
         self._action_widgets.append(cp)
+        mrow = ttk.Frame(t); mrow.pack(anchor="w", pady=(8, 0))
+        mt = ttk.Button(mrow, text="Match my own files to the gallery",
+                        command=self.on_reconcile)
+        mt.pack(side="left")
+        self._action_widgets.append(mt)
+        ttk.Label(mrow, foreground="#555", wraplength=self.SETUP_WRAP - 260,
+                  justify="left",
+                  text="Your imported or added palettes and stages that are really "
+                       "gallery items take the gallery's name and preview (locks "
+                       "kept). Runs by itself after every gallery download - use "
+                       "this after adding files of your own."
+                  ).pack(side="left", padx=(10, 0))
 
         ttk.Separator(t, orient="horizontal").pack(fill="x", pady=8)
         ttk.Label(t, text="Curated mixes (content choices)",
@@ -368,8 +387,23 @@ class App:
         self._action_widgets.append(nx_btn)
         rf_btn = ttk.Button(top, text="↻ Rescan", command=self.on_rescan)
         rf_btn.pack(side="right"); self._action_widgets.append(rf_btn)
-        self.palettes_lbl = ttk.Label(t, text="", foreground="#555")
-        self.palettes_lbl.pack(anchor="w", pady=(6, 6))
+        self._gallery_empty_panel(t, "palettes", "skins",
+                                  "Your own sheets in the custom folder show up either way.")
+        lrow = ttk.Frame(t); lrow.pack(fill="x", pady=(6, 6))
+        self.palettes_lbl = ttk.Label(lrow, text="", foreground="#555")
+        self.palettes_lbl.pack(side="left")
+        self.mine_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(lrow, text="Unique to me (not in the gallery)",
+                        variable=self.mine_var,
+                        command=self._on_mine_toggle).pack(side="left", padx=(16, 0))
+        self.mine_lbl = ttk.Label(lrow, text="", foreground="#8a5a00")
+        self.mine_lbl.pack(side="left", padx=(10, 0))
+        ad_btn = ttk.Button(lrow, text="Add my own palettes...", command=self.on_add_palettes)
+        ad_btn.pack(side="right"); self._action_widgets.append(ad_btn)
+        ttk.Button(lrow, text="Open custom folder",
+                   command=lambda: onboard.open_folder(os.path.join(
+                       config.CUSTOM, "skins", self._cur_char or ""))
+                   ).pack(side="right", padx=(0, 6))
         # Mix slots: the six palettes this character uses (= palette locks).
         # Keys 1-6 put the palette you're viewing into LP..A2.
         self.mix_bar = ttk.Frame(t); self.mix_bar.pack(fill="x", pady=(0, 6))
@@ -633,7 +667,7 @@ class App:
         unrev = sum(self._unrev.values())
         self.palettes_lbl.config(
             text=(f"{total:,} palettes    ·    {unrev} unreviewed    ·    {rej} rejected"
-                  if total else "No palettes yet - run Download / Update in Settings."))
+                  if total else "No palettes yet - download the gallery, or add your own."))
 
     # ---- image-review view ----
     def _on_unrev_toggle(self):
@@ -645,6 +679,27 @@ class App:
 
     def _on_char_change(self):
         self._load_char(self._current_char(), land=0)
+
+    @staticmethod
+    def _own_palette_chars():
+        root = os.path.join(config.CUSTOM, "skins")
+        try:
+            return sorted(f for f in os.listdir(root)
+                          if os.path.isdir(os.path.join(root, f)) and any(
+                              n.lower().endswith(".png")
+                              for n in os.listdir(os.path.join(root, f))))
+        except OSError:
+            return []
+
+    def _on_mine_toggle(self):
+        """'Unique to me' on: go to a character that has some, if this one
+        doesn't."""
+        char = self._current_char()
+        if self.mine_var.get():
+            own = self._own_palette_chars()
+            if own and char not in own:
+                char = own[0]
+        self._load_char(char, land=0)
 
     def _load_char(self, char, land=0):
         """Populate the list for a character and land on a position (land >= 0
@@ -660,6 +715,17 @@ class App:
             self.pal_files = [f for f in self.pal_files
                               if verdicts.get(palettes.key_for(char, f))
                               != palettes.REJECT]
+        if getattr(self, "mine_lbl", None) is not None:
+            self.mine_lbl.config(text="")
+        if char and getattr(self, "mine_var", None) is not None and self.mine_var.get():
+            self.pal_files = [f for f in self.pal_files if f.startswith("custom/")]
+            own = self._own_palette_chars()
+            if not own:
+                self.mine_lbl.config(text="You don't have any palettes of your own yet.")
+            else:
+                self.mine_lbl.config(text=(
+                    "Yours: " if char in own else f"None for {char} - yours: ")
+                    + ", ".join(own[:3]) + (f" +{len(own) - 3}" if len(own) > 3 else ""))
         if char and self.sortcol_var.get():
             self.pal_files = palettes.sort_similarity(char, self.pal_files)
         self.file_list.delete(0, "end")
@@ -1792,9 +1858,10 @@ class App:
                   ).pack(anchor="w")
         ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
                   text="Pin any stage slot to one stage so it never rolls; leave "
-                       "it on \"(random)\" to keep shuffling. Turn on \"Distribute "
-                       "ported stages\" in Setup to lock ports into any slot too. "
-                       "Saved instantly."
+                       "it on \"(random)\" to keep shuffling. Your own stages "
+                       "(imported or added) are marked ★ at the top of each list. "
+                       "Ported stages can go in any slot they fit while Settings > "
+                       "Cross-slot stages is on. Saved instantly."
                   ).pack(anchor="w", pady=(2, 8))
 
         # Playlist: which stages unlocked slots draw from on every Randomize,
@@ -1813,16 +1880,27 @@ class App:
         self.splay_info = ttk.Label(prow, text="", foreground="#666")
         self.splay_info.pack(side="left", padx=(10, 0))
 
+        # Shown while the gallery isn't downloaded: the rows below exist but
+        # have nothing to offer (stage choices come from the gallery manifest).
+        self.slock_nogal = ttk.Label(
+            t, foreground="#8a5a00", wraplength=self.SETUP_WRAP, justify="left",
+            text="Download the gallery (Home tab) to choose stages here - the stage "
+                 "list, including your own imported stages, comes from it.")
         sgrid = ttk.Frame(t); sgrid.pack(fill="x", pady=(0, 4))
+        self._slock_grid = sgrid
         sgrid.columnconfigure(2, weight=1)
         self.slock_row_vars = {}
         self.slock_row_boxes = {}
         self.slock_row_maps = {}
-        for r, (sid, short, _vs) in enumerate(stagegal.slot_lock_options()):
+        self.slock_row_titles = {}
+        # Rows come from the fixed slot list (not the manifest), so they exist
+        # even when the app started before the gallery was downloaded.
+        for r, sid in enumerate(stagegal.SLOTS):
             ttk.Label(sgrid, text=sid, font=("Consolas", 10, "bold"), width=4
                       ).grid(row=r, column=0, sticky="w", pady=3)
-            ttk.Label(sgrid, text=short, foreground="#555", anchor="w"
-                      ).grid(row=r, column=1, sticky="w", padx=(4, 10), pady=3)
+            tl = ttk.Label(sgrid, text="", foreground="#555", anchor="w")
+            tl.grid(row=r, column=1, sticky="w", padx=(4, 10), pady=3)
+            self.slock_row_titles[sid] = tl
             var = tk.StringVar(value="(random)")
             box = ttk.Combobox(sgrid, textvariable=var, state="readonly", values=[])
             box.grid(row=r, column=2, sticky="ew", padx=(4, 8), pady=3)
@@ -1842,7 +1920,37 @@ class App:
         self.slock_status = ttk.Label(srow, text="", foreground="#177245")
         self.slock_status.pack(side="left", padx=(12, 0))
 
-    def _slock_populate(self):
+    def _slot_fits_bg(self, sig):
+        if getattr(self, "_slot_fits_running", False):
+            return
+        self._slot_fits_running = True
+        try:
+            self.slock_status.config(text="Checking which ported stages fit each "
+                                     "slot (first time only, a few seconds)...",
+                                     foreground="#8a5a00")
+        except (tk.TclError, AttributeError):
+            pass
+
+        def work():
+            try:
+                res = randomize.stage_fit_detail()
+            except Exception as e:
+                activity.error("slot fit check", e)
+                res = ({}, {})
+
+            def done():
+                self._slot_fits_running = False
+                self._slot_fits, self._slot_fit_why = res
+                self._slot_fits_sig = sig
+                try:
+                    self.slock_status.config(text="", foreground="#177245")
+                except tk.TclError:
+                    pass
+                self._slock_populate()
+            self.q.put(("call", done))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _slock_populate(self, sync=False):
         """Fill every slot row's dropdown with its lockable stages + current
         lock. Ports are offered per slot when cross-slot merge is enabled, and
         only to the slots they actually fit."""
@@ -1861,9 +1969,18 @@ class App:
             sig = self._stage_port_sig()
             if getattr(self, "_slot_fits", None) is None or \
                     sig != getattr(self, "_slot_fits_sig", None):
-                self._slot_fits, self._slot_fit_why = randomize.stage_fit_detail()
-                self._slot_fits_sig = sig
-            fits = self._slot_fits
+                hit = randomize.stage_fit_cached()      # disk cache: instant
+                if hit is not None or sync:
+                    self._slot_fits, self._slot_fit_why = (
+                        hit if hit is not None else randomize.stage_fit_detail())
+                    self._slot_fits_sig = sig
+                else:
+                    # First time (or ports changed): the check trial-merges every
+                    # port into every slot - do it in the background and fill
+                    # the lists in when it's done instead of freezing the tab.
+                    self._slot_fits_bg(sig)
+            fits = (self._slot_fits
+                    if getattr(self, "_slot_fits_sig", None) == sig else {})
         why_all = getattr(self, "_slot_fit_why", {}) if dp else {}
         verdicts = stagegal.load_verdicts()
         locked = stagegal.load_locks()
@@ -1872,12 +1989,26 @@ class App:
         all_ports = [v for t, vs in stagegal.sections() if t.startswith("Ports")
                      for v in vs]
         self.slock_dead = {}
-        for sid, _short, variants in stagegal.slot_lock_options(
-                distribute_ports=dp, slot_fits=fits):
+        opts = stagegal.slot_lock_options(distribute_ports=dp, slot_fits=fits)
+        try:
+            if opts:
+                self.slock_nogal.pack_forget()
+            elif not self.slock_nogal.winfo_ismapped():
+                self.slock_nogal.pack(anchor="w", pady=(0, 6), before=self._slock_grid)
+        except tk.TclError:
+            pass
+        for sid, short, _vs in opts:
+            tl = self.slock_row_titles.get(sid)
+            if tl is not None:
+                tl.config(text=short)
+        for sid, _short, variants in opts:
             box = self.slock_row_boxes.get(sid)
             if box is None:
                 continue
             cur_lock = locked.get(sid)
+            # Your own stages (imported / dropped in) first, so they're easy
+            # to find among the slot's gallery stages.
+            variants = sorted(variants, key=lambda v: v.get("author") != "you")
             pool = [v for v in variants
                     if allowed(v) or v["key"] == cur_lock]   # keep an existing lock
             # Nothing just vanishes: everything that could be listed here but
@@ -1902,6 +2033,8 @@ class App:
             for v in pool:
                 kind = stagegal.KIND_LABEL.get(v["kind"], v["kind"])
                 disp = f"{stagegal.display_name(v)} — {v['author']} [{kind}]"
+                if v.get("author") == "you":
+                    disp = "★ " + disp
                 if not allowed(v):              # the current lock isn't kept
                     disp = "⚠ " + disp + " — locked, but " + (
                         "rejected" if verdicts.get(v["key"]) == "delete"
@@ -2032,7 +2165,7 @@ class App:
         keys = set(stagegal.playlist_keys(name))
         verdicts = stagegal.load_verdicts()
         dp = bool(randomize.get_config().get("distribute_ports", False))
-        self._slock_populate()                 # makes sure the fit map is fresh
+        self._slock_populate(sync=True)        # makes sure the fit map is fresh
         opts = {sid: vs for sid, _s, vs in stagegal.slot_lock_options(
             distribute_ports=dp, slot_fits=self._slot_fits if dp else None)}
         cands = {sid: [v for v in vs if v["key"] in keys
@@ -2229,6 +2362,15 @@ class App:
 
     def _tab_stages(self, nb):
         t = ttk.Frame(nb, padding=10); nb.add(t, text="Stage Gallery")
+        self._gallery_empty_panel(t, "stages", "stages",
+                                  "It's also needed to see and pick stages, including "
+                                  "your own.")
+        srow = ttk.Frame(t); srow.pack(fill="x", pady=(0, 6))
+        b = ttk.Button(srow, text="Add my own stage files...", command=self.on_add_stages)
+        b.pack(side="right"); self._action_widgets.append(b)
+        ttk.Button(srow, text="Open custom folder",
+                   command=lambda: onboard.open_folder(os.path.join(config.CUSTOM, "stages"))
+                   ).pack(side="right", padx=(0, 6))
         pw = ttk.PanedWindow(t, orient="horizontal")
         pw.pack(fill="both", expand=True)
 
@@ -2236,26 +2378,28 @@ class App:
         left = ttk.Frame(pw, padding=(0, 0, 6, 0))
         # Tree + scrollbar: the list now runs 17 slots + port groups, well past
         # one screen, so the scrollbar makes the overflow visible.
-        tree_wrap = ttk.Frame(left); tree_wrap.pack(fill="x")
+        # Small requested height + expand: the list takes whatever room the
+        # controls below leave, so they're never pushed off the bottom.
+        tree_wrap = ttk.Frame(left); tree_wrap.pack(fill="both", expand=True)
         self.stg_tree = ttk.Treeview(tree_wrap, columns=("n",), show="tree",
-                                     selectmode="browse", height=17)
-        self.stg_tree.column("#0", width=196, stretch=True)
+                                     selectmode="browse", height=5)
+        self.stg_tree.column("#0", width=236, stretch=True)
         self.stg_tree.column("n", width=46, anchor="e", stretch=False)
         stg_vsb = ttk.Scrollbar(tree_wrap, orient="vertical",
                                 command=self.stg_tree.yview)
         self.stg_tree.configure(yscrollcommand=stg_vsb.set)
         stg_vsb.pack(side="right", fill="y")
-        self.stg_tree.pack(side="left", fill="x", expand=True)
+        self.stg_tree.pack(side="left", fill="both", expand=True)
         self.stg_tree.bind("<<TreeviewSelect>>", lambda e: self._on_stage_slot())
 
         ttk.Separator(left, orient="horizontal").pack(fill="x", pady=8)
         ttk.Label(left, text="Selected stage", font=("Segoe UI", 9, "bold")
                   ).pack(anchor="w")
-        self.stg_sel_name = ttk.Label(left, text="-", wraplength=225,
+        self.stg_sel_name = ttk.Label(left, text="-", wraplength=265,
                                       font=("Segoe UI", 10, "bold"))
         self.stg_sel_name.pack(anchor="w", pady=(2, 0))
         self.stg_sel_sub = ttk.Label(left, text="", foreground="#666",
-                                     wraplength=225)
+                                     wraplength=265)
         self.stg_sel_sub.pack(anchor="w")
         self.stg_verdict_lbl = ttk.Label(left, text="", font=("Segoe UI", 9))
         self.stg_verdict_lbl.pack(anchor="w", pady=(4, 0))
@@ -2292,28 +2436,30 @@ class App:
                                      command=self._stg_pl_toggle)
         self.stg_pl_btn.pack(anchor="w", pady=(4, 0))
         self.stg_pl_lbl = ttk.Label(left, text="", foreground="#666",
-                                    wraplength=225, justify="left")
+                                    wraplength=265, justify="left")
         self.stg_pl_lbl.pack(anchor="w")
         self._stg_pl_keys = set()
 
         ttk.Separator(left, orient="horizontal").pack(fill="x", pady=8)
         ttk.Label(left, text="Show", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        shw = ttk.Frame(left); shw.pack(anchor="w", fill="x")
         self.stg_hiderej_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(left, text="Hide rejected", variable=self.stg_hiderej_var,
-                        command=self._stage_refilter).pack(anchor="w")
         self.stg_shownew_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(left, text="Show new only", variable=self.stg_shownew_var,
-                        command=self._stage_refilter).pack(anchor="w")
         self.stg_plonly_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(left, text="Playlist only", variable=self.stg_plonly_var,
-                        command=self._stage_refilter).pack(anchor="w")
+        self.stg_mine_var = tk.BooleanVar(value=False)
+        for i, (txt, var) in enumerate((("Hide rejected", self.stg_hiderej_var),
+                                        ("New only", self.stg_shownew_var),
+                                        ("Playlist only", self.stg_plonly_var),
+                                        ("Unique to me", self.stg_mine_var))):
+            ttk.Checkbutton(shw, text=txt, variable=var, command=self._stage_refilter
+                            ).grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 10))
         ttk.Button(left, text="↻ Rescan local files",
                    command=self.on_rescan).pack(anchor="w", pady=(2, 0))
         self.stg_assign_btn = ttk.Button(left, text="",
                                          command=self.on_assign_customs)
         # packed only when there are pending drop-ins (see _load_stage_gallery)
         self.stage_lbl = ttk.Label(left, text="", foreground="#666",
-                                   wraplength=225, justify="left")
+                                   wraplength=265, justify="left")
         self.stage_lbl.pack(anchor="w", pady=(10, 0))
         pw.add(left, weight=0)
 
@@ -2515,6 +2661,15 @@ class App:
                    ).pack(side="right", padx=(0, 8))
 
     def _stage_slot_variants(self):
+        if getattr(self, "stg_mine_var", None) is not None and self.stg_mine_var.get():
+            # every custom / imported stage, whichever slot it belongs to
+            seen, out = set(), []
+            for _t, vs in self._stage_secs:
+                for v in vs:
+                    if v.get("author") == "you" and v["key"] not in seen:
+                        seen.add(v["key"])
+                        out.append(v)
+            return out
         sel = self.stg_tree.selection()
         if not sel or not self._stage_secs:
             return []
@@ -2592,7 +2747,8 @@ class App:
             grid_of(base)
         if extra:
             tk.Label(self.stg_inner,
-                     text="custom & ported stages (training slot only)",
+                     text=("custom & ported stages - Training here; any slot "
+                           "with Settings > Cross-slot stages"),
                      background="#2d2d2d", foreground="#bbbbbb",
                      font=("Segoe UI", 9, "italic")).pack(anchor="w",
                                                           padx=8, pady=(8, 0))
@@ -2697,7 +2853,12 @@ class App:
             mf.config(highlightbackground=c, highlightcolor=c)
         path = (v or {}).get("views", {}).get(vk)
         if not path:
-            if v is not None:
+            if v is not None and v.get("author") == "you":
+                im = stagegal.custom_tile(v, width=int(self.HERO_H * 4 / 3),
+                                          height=self.HERO_H)
+                self._hero_img = ImageTk.PhotoImage(im)
+                self.stg_hero.config(image=self._hero_img, text="")
+            elif v is not None:
                 self.stg_hero.config(image="", text="no preview", width=42,
                                      height=14)
                 self._hero_img = None
@@ -5087,16 +5248,17 @@ class App:
         t = ttk.Frame(self._scroll_body(outer), padding=14)
         t.pack(fill="both", expand=True)
         W = self.SETUP_WRAP
-        self.home_banner = tk.Label(t, anchor="w", justify="left", padx=10, pady=7,
-                                    font=("Segoe UI", 10), wraplength=W)
-        self.home_banner.pack(fill="x")
+        # The old one-line banner is now the Getting-started checklist.
+        self.home_banner = tk.Label(t)
+        self._build_checklist(t)
 
-        ttk.Label(t, text="What each Randomize changes", font=("Segoe UI", 11, "bold")
+        ttk.Label(t, text="What the app changes in your game", font=("Segoe UI", 11, "bold")
                   ).pack(anchor="w", pady=(14, 0))
         ttk.Label(t, foreground="#555", wraplength=W, justify="left",
-                  text="Each Randomize (and each Steam launch with the launch option) "
-                       "changes only what's switched on. Anything switched off stays "
-                       "exactly as it is in your game."
+                  text="Only what's switched on is changed; anything switched off stays "
+                       "exactly as it is. Random is optional: anything you lock (a "
+                       "palette on a button, a stage in a slot) stays put, and only "
+                       "unlocked things change each time you apply."
                   ).pack(anchor="w", pady=(2, 6))
         grid = ttk.Frame(t); grid.pack(anchor="w", fill="x")
         cfg0 = randomize.get_config()
@@ -5115,7 +5277,7 @@ class App:
                        ).grid(row=r, column=2, sticky="e")
 
         rrow = ttk.Frame(t); rrow.pack(anchor="w", pady=(12, 0))
-        r = ttk.Button(rrow, text="Randomize now", command=self.on_randomize)
+        r = ttk.Button(rrow, text="Apply to game", command=self.on_randomize)
         r.pack(side="left")
         self._action_widgets.append(r)
         v = ttk.Button(rrow, text="View last run log", command=self.on_view_log)
@@ -5137,6 +5299,9 @@ class App:
         b.pack(side="left")
         self._action_widgets.append(b)
         b = ttk.Button(grow, text="Check again", command=lambda: self._home_check(force=True))
+        b.pack(side="left", padx=(8, 0))
+        self._action_widgets.append(b)
+        b = ttk.Button(grow, text="Import custom content...", command=self._import_menu)
         b.pack(side="left", padx=(8, 0))
         self._action_widgets.append(b)
         t.bind("<Map>", lambda e: self._home_refresh(), add="+")
@@ -5186,15 +5351,20 @@ class App:
         ttk.Label(t, foreground="#555", justify="left", wraplength=self.SETUP_WRAP,
                   text="Characters whose palettes were edited outside this app "
                        "(e.g. with PalMod) are protected automatically - the "
-                       "randomizer leaves them alone so your work isn't "
-                       "overwritten. Unlock one to randomize over it, or reset "
+                       "app leaves them alone so your work isn't overwritten. "
+                       "Import them to keep those colours as your own palettes "
+                       "(recommended), unlock one to randomize over it, or reset "
                        "it to vanilla above."
                   ).pack(anchor="w", pady=(2, 8))
         self.prot_lbl = ttk.Label(t, text="None detected.", foreground="#555",
                                   wraplength=self.SETUP_WRAP, justify="left")
         self.prot_lbl.pack(anchor="w", pady=(0, 6))
-        unl = ttk.Button(t, text="Unlock for randomizing...", command=self.on_unprotect)
-        unl.pack(anchor="w")
+        prow = ttk.Frame(t); prow.pack(anchor="w")
+        imp = ttk.Button(prow, text="Import them...", command=lambda: self.on_import("live"))
+        imp.pack(side="left")
+        self._action_widgets.append(imp)
+        unl = ttk.Button(prow, text="Unlock for randomizing...", command=self.on_unprotect)
+        unl.pack(side="left", padx=(8, 0))
         self._action_widgets.append(unl)
 
     def on_rescan(self):
@@ -5341,7 +5511,7 @@ class App:
         # palettes
         if on["randomize_palettes"]:
             n = ms.get("chars_full", 0)
-            txt = "New colors on each Randomize" + (
+            txt = "New colors each time you apply" + (
                 f" · {n} characters fully locked to your picks" if n else "")
         else:
             txt = "Off: palettes stay exactly as they are in your game"
@@ -5350,7 +5520,7 @@ class App:
         if on["randomize_stages"]:
             pl = cfg.get("stage_playlist")
             nl = ms.get("stages_locked", 0)
-            txt = "New stages on each Randomize" + (f" · playlist '{pl}'" if pl else "") + (
+            txt = "New stages each time you apply" + (f" · playlist '{pl}'" if pl else "") + (
                 f" · {nl} slots locked" if nl else "")
         else:
             txt = "Off: your stage files stay exactly as they are"
@@ -5385,10 +5555,10 @@ class App:
         try:
             import time as _t
             mt = os.path.getmtime(config.LAST_RUN)
-            self.home_last_lbl.config(text="Last Randomize: " + _t.strftime(
+            self.home_last_lbl.config(text="Last applied to your game: " + _t.strftime(
                 "%Y-%m-%d %H:%M", _t.localtime(mt)))
         except OSError:
-            self.home_last_lbl.config(text="Not randomized yet")
+            self.home_last_lbl.config(text="Not applied to your game yet")
         self._home_banner()
 
     def _home_banner(self):
@@ -5402,11 +5572,12 @@ class App:
             kind, txt = "warn", ("No backup of your game file yet - one is made "
                                  "automatically before the first change.")
         else:
-            kind, txt = "ok", ("Ready. Click Randomize now, or launch the game through "
+            kind, txt = "ok", ("Ready. Click Apply to game, or launch the game through "
                                "Steam with the launch option (Settings) to randomize "
                                "every time you play.")
         bg, fg = self.BANNER[kind]
         self.home_banner.config(text=txt, bg=bg, fg=fg)
+        self._checklist_refresh()
 
     def _home_check(self, force=False):
         """Check the game file against stock in the background."""
@@ -5428,6 +5599,7 @@ class App:
 
     def _home_show_check(self, rep):
         self._home_checking = False
+        self._last_check = rep if rep and not rep.get("error") else None
         if not rep or rep.get("error"):
             self.home_game_lbl.config(text="Couldn't read your game file"
                                       + (f": {rep['error']}" if rep else "."))
@@ -5545,6 +5717,13 @@ class App:
             for k, _, _ in self.HOME_ROWS:
                 randomize.set_config_key(k, False)
                 self.scope_vars[k].set(False)
+            # New-user defaults: random picks only from what you keep (a
+            # starting preset can widen it), and ports allowed in every slot.
+            randomize.set_config_key("include_unreviewed", False)
+            randomize.set_config_key("distribute_ports", True)
+            for var, val in (("incl_unrev_var", False), ("ports_var", True)):
+                if getattr(self, var, None) is not None:
+                    getattr(self, var).set(val)
         dlg = tk.Toplevel(self.root)
         dlg.title("Set up the MvC2 Randomizer")
         dlg.transient(self.root)
@@ -5557,6 +5736,8 @@ class App:
         nxt.pack(side="right"); back.pack(side="right", padx=6)
         state = {"step": 0}
         W = 660
+        import_var = tk.BooleanVar(value=True)
+        modded = {"yes": False}
 
         def clear():
             for w in body.winfo_children():
@@ -5600,6 +5781,7 @@ class App:
                     res.config(text="Couldn't read the game file.")
                     return
                 lines = [v for _, v in G.summary_lines(rep) if v]
+                self._last_check = rep
                 if rep.get("stock"):
                     res.config(text="Your game matches the stock Steam game.")
                 else:
@@ -5608,6 +5790,18 @@ class App:
                                + "".join("\n   •  " + ln for ln in lines)
                                + "\n\nNothing changes until you switch something on. Parts "
                                  "you leave off stay exactly as they are.")
+                    if rep.get("palettes") or rep.get("fx") or rep.get("stages"):
+                        modded["yes"] = True
+                        ttk.Checkbutton(
+                            body, variable=import_var,
+                            text="Import my custom colours and stages (recommended)"
+                        ).pack(anchor="w", pady=(10, 0))
+                        ttk.Label(body, foreground="#555", wraplength=W - 24,
+                                  justify="left",
+                                  text="They're saved as your own files and locked "
+                                       "where they are, so you keep them and can still "
+                                       "use the gallery. Done when you click Finish."
+                                  ).pack(anchor="w", padx=(22, 0))
             threading.Thread(target=work, daemon=True).start()
 
         def step_choose():
@@ -5615,8 +5809,47 @@ class App:
             ttk.Label(body, text="What should the randomizer change?",
                       font=("Segoe UI", 12, "bold")).pack(anchor="w")
             ttk.Label(body, foreground="#555", wraplength=W, justify="left",
-                      text="You can change this any time on the Home tab."
-                      ).pack(anchor="w", pady=(2, 10))
+                      text="Pick a starting point - you can change any of it later on "
+                           "the Home tab."
+                      ).pack(anchor="w", pady=(2, 6))
+            presets_row = ttk.Frame(body); presets_row.pack(anchor="w", pady=(0, 8))
+
+            def preset(name):
+                on = {"shuffle": {"randomize_palettes": True, "randomize_stages": True,
+                                  "randomize_fx": True},
+                      "stages": {"randomize_palettes": False, "randomize_stages": True,
+                                 "randomize_fx": False},
+                      "pick": {"randomize_palettes": False, "randomize_stages": False,
+                               "randomize_fx": False}}[name]
+                for k, v in on.items():
+                    self.scope_vars[k].set(v)
+                    self._on_scope_toggle(k)
+                # "pick it all myself": only what you keep/lock is used - nothing
+                # you haven't chosen gets rolled in.
+                randomize.set_config_key("include_unreviewed", name != "pick")
+                if getattr(self, "incl_unrev_var", None) is not None:
+                    self.incl_unrev_var.set(name != "pick")
+                pick_lbl.config(text={
+                    "shuffle": "New colours and stages every time - lock anything you "
+                               "want to keep.",
+                    "stages": "Your colours stay exactly as they are; you get the stage "
+                              "gallery. Lock stages to slots in the Stage Gallery, or "
+                              "let them shuffle.",
+                    "pick": "Everything starts off, so nothing in your game changes. "
+                            "Pick palettes and stages in the galleries (Keep or lock "
+                            "them), then switch Palettes / Stages on - only what you "
+                            "chose is used."}[name])
+                activity.log(f"first-run preset: {name}")
+            for key, label in (("shuffle", "Shuffle everything"),
+                               ("stages", "Just add stages - keep my colours"),
+                               ("pick", "I'll pick everything myself")):
+                ttk.Button(presets_row, text=label,
+                           command=lambda k=key: preset(k)).pack(side="left", padx=(0, 6))
+            pick_lbl = ttk.Label(body, text="", foreground="#1e6b34", wraplength=W,
+                                 justify="left")
+            pick_lbl.pack(anchor="w", pady=(0, 6))
+            ttk.Label(body, text="Or switch parts on and off yourself:",
+                      foreground="#555").pack(anchor="w")
             desc = {"randomize_palettes": "Character colors from the community gallery "
                                           "(needs the gallery download)",
                     "randomize_stages": "Stages from the gallery (needs the gallery "
@@ -5639,15 +5872,17 @@ class App:
                            "Each time you start the game from Steam, the randomizer applies "
                            "your settings first - and runs the Arcade features while you "
                            "play.\n\n"
-                           "2.  By hand: click Randomize now on the Home tab, then start the "
+                           "2.  By hand: click Apply to game on the Home tab, then start the "
                            "game. For the Arcade features, keep this app open while you play."
                       ).pack(anchor="w", pady=(6, 10))
             ttk.Button(body, text="Copy the Steam launch option...",
                        command=self.on_enable_steam).pack(anchor="w")
-            ttk.Label(body, foreground="#555", wraplength=W, justify="left",
-                      text="\nIf a gallery part is switched on, download the gallery next "
-                           "(Settings > Download / Update gallery content)."
-                      ).pack(anchor="w")
+            if not onboard.has_gallery():
+                ttk.Label(body, foreground="#555", wraplength=W, justify="left",
+                          text="\nPalettes and stages come from the community gallery "
+                               "(about 750 MB, not included in the app). After you click "
+                               "Finish, the Home tab's checklist has a Download button."
+                          ).pack(anchor="w")
 
         pages = [("1 Your game", step_game), ("2 What to change", step_choose),
                  ("3 How it runs", step_launch)]
@@ -5668,6 +5903,8 @@ class App:
                 dlg.destroy()
                 self._home_refresh()
                 self._home_check(force=True)
+                if modded["yes"] and import_var.get():
+                    self.root.after(200, lambda: self.on_import("backup", quiet=True))
                 return
             state["step"] = max(0, i)
             show_step()
@@ -5730,6 +5967,8 @@ class App:
             roster = self._chars
         self.reset_char_combo["values"] = ["All characters"] + roster
         self._refresh_protected()
+        self._gallery_empty_refresh()
+        self._checklist_refresh()
         n = config.skins_count()
         if config.has_game() and n:
             self.status_lbl.config(text="Ready. See the Home tab.",
@@ -5748,18 +5987,61 @@ class App:
     # ------------------------------------------------------------- job runner
     def _set_busy(self, on, label=""):
         self.busy = on
+        # Rebuilt panels (the Home checklist) leave destroyed buttons behind.
+        live = []
         for w in self._action_widgets:
-            w.config(state="disabled" if on else "normal")
+            try:
+                if w.winfo_exists():
+                    w.config(state="disabled" if on else "normal")
+                    live.append(w)
+            except tk.TclError:
+                pass
+        self._action_widgets[:] = live
         if on:
             self.pbar.pack(side="right"); self.pbar.start(12)
             self.busy_lbl.config(text=label)
         else:
             self.pbar.stop(); self.pbar.pack_forget()
+            self.pbar.config(mode="indeterminate", value=0)
             self.busy_lbl.config(text="")
 
-    def run_job(self, title, fn, on_done=None, **kwargs):
+    # Long jobs (the gallery download) narrate what they're doing in the
+    # always-visible status bar: a real percentage while downloading, then
+    # each unpacking phase.
+    _PHASES = (("Downloaded", "Download finished - unpacking palettes..."),
+               ("Merging skins", "Unpacking palettes..."),
+               ("Added", "Unpacking stages..."))
+
+    def _progress_update(self, msg):
+        """A download tick like '42.3% — 310.0 / 750.0 MB'."""
+        import re as _re
+        m = _re.search(r"([\d.]+)%", msg or "")
+        if not m:
+            return
+        pct = float(m.group(1))
+        if self.pbar.cget("mode") != "determinate":
+            self.pbar.stop(); self.pbar.config(mode="determinate", maximum=100)
+        self.pbar.config(value=pct)
+        mb = _re.search(r"([\d.]+)\s*/\s*([\d.]+)\s*MB", msg)
+        what = getattr(self, "_job_what", "") or "Downloading"
+        self.busy_lbl.config(text=f"{what}: {pct:.0f}%" + (
+            f"  ({float(mb.group(1)):.0f} of {float(mb.group(2)):.0f} MB)" if mb else ""))
+
+    def _progress_phase(self, line):
+        if not self.busy:
+            return
+        for key, text in self._PHASES:
+            if str(line).startswith(key):
+                self.busy_lbl.config(text=text)
+                if self.pbar.cget("mode") != "indeterminate":
+                    self.pbar.config(mode="indeterminate", value=0)
+                    self.pbar.start(12)
+                return
+
+    def run_job(self, title, fn, on_done=None, what=None, **kwargs):
         if self.busy:
             return
+        self._job_what = what
         self._job_on_done = on_done
         activity.log(f"job started: {title}")
         self.logln("\n" + "=" * 56)
@@ -5792,9 +6074,11 @@ class App:
                 kind, payload = self.q.get_nowait()
                 if kind == "log":
                     self.logln(payload)
+                    self._progress_phase(payload)
                 elif kind == "status":       # live progress next to the spinner
                     msg = payload.split("]", 1)[-1].strip() if "]" in payload else payload
                     self.busy_lbl.config(text=msg or "working...")
+                    self._progress_update(msg)
                 elif kind == "done":
                     self._set_busy(False)
                     self.logln("\nDone.")
@@ -5886,7 +6170,10 @@ class App:
                      + "   ")
 
     def on_download(self):
-        if not messagebox.askyesno(
+        first = not onboard.has_gallery()
+        # The first download's button already says "~750 MB" - no extra
+        # window. Re-downloads (updates) still ask.
+        if not first and not messagebox.askyesno(
                 "Download palette & stage gallery",
                 "This downloads the full palette and stage gallery from GitHub "
                 "- roughly 750 MB.\n\n"
@@ -5894,8 +6181,7 @@ class App:
                 "keep/reject choices) is preserved.\n\nContinue?"):
             return
         self.run_job("Downloading / updating gallery", randomize.download_palettes,
-                     on_done=self._after_download)
-        self._select_tab("Logs")         # watch progress; "Done." marks the end
+                     on_done=self._after_download, what="Downloading the gallery")
 
     def _select_tab(self, suffix):
         """Switch the notebook to the tab whose title is (or ends with) `suffix`."""
@@ -5910,22 +6196,15 @@ class App:
         self._slot_fits = None             # new ports - recompute the fit map
         self._load_stage_gallery(force=True)
         self._refresh_presets()
-        # Fresh user with an uncurated collection: offer a curated mix.
-        if self._presets and len(palettes.load_verdicts()) < 50:
-            p = self._presets[0]
-            if messagebox.askyesno(
-                    "Skip the curation?",
-                    f"A curated mix is available: \"{p['name']}\" by "
-                    f"{p['author']} ({p['keeps']:,} hand-picked palettes).\n\n"
-                    "Apply it now so you don't have to review thousands of "
-                    "palettes yourself? (You can change any of it later, or "
-                    "apply a different mix from Settings.)"):
-                result = presets.apply_preset(p["path"], "replace")
-                self.logln(f"Applied mix \"{result['name']}\": "
-                           f"{result['palettes']:,} palette verdicts.")
-                self.refresh_status()
-                self._on_char_change()
-                self._stage_built = False
+        self._slock_populate()
+        # A fresh user is offered a curated palette list on the Home checklist
+        # (no pop-up) - see OnboardMixin._curated_offer.
+        self._chk_last = None
+        self._checklist_refresh()
+        # Imported / dropped-in files that turn out to be gallery items take
+        # the gallery's names and previews.
+        if self._has_custom_content():
+            self.root.after(300, lambda: self.on_reconcile(auto=True))
 
     def on_view_log(self):
         self.logln("\n" + "-" * 56)
@@ -5968,7 +6247,7 @@ class App:
                 "Some settings changed after the game file was last written "
                 f"({', '.join(s['stale'])}), so the export wouldn't include "
                 "them yet - e.g. FX recolors are baked in by Randomize.\n\n"
-                "Yes = Randomize now, then export (unlocked slots re-roll).\n"
+                "Yes = Apply to game now, then export (unlocked things re-roll).\n"
                 "No = export the game file exactly as it is.")
             if ans is None:
                 return
@@ -6029,7 +6308,7 @@ class App:
                 return
         elif not messagebox.askyesno(
                 "Game file doesn't fully match your locks",
-                text + "\n\nExport anyway? (Usually: click Randomize now first.)",
+                text + "\n\nExport anyway? (Usually: click Apply to game first.)",
                 icon="warning"):
             return
         dest = filedialog.asksaveasfilename(
@@ -6070,7 +6349,19 @@ class App:
             except ValueError:
                 messagebox.showerror("Bad seed", "Seed must be a whole number.")
                 return
-        self.run_job("Randomizing", randomize.randomize,
+        try:
+            randomize._engine()
+            from mvc2_data import arcade_companion
+            running = arcade_companion.game_running()
+        except Exception:
+            running = False
+        if running and not messagebox.askyesno(
+                "The game is running",
+                "The game is open right now. It only reads its game file when it "
+                "starts, so changes show up after you restart it - and writing the "
+                "file while it's open can fail.\n\nApply anyway?", icon="warning"):
+            return
+        self.run_job("Applying to your game", randomize.randomize,
                      on_done=self._announce_new_protected, **kwargs)
 
     def _reset_selection(self):
@@ -6138,14 +6429,16 @@ class App:
         if not fresh:
             return
         randomize.mark_protected_notified()
-        messagebox.showinfo(
-            "Existing palette edits found",
-            "These characters' palettes were edited outside this app (e.g.\n"
-            "with PalMod), so they were NOT randomized:\n\n"
-            f"  {', '.join(sorted(fresh))}\n\n"
-            "Your work is protected. To include a character again, use the\n"
-            "Home tab: reset it to vanilla, or unlock it to let the\n"
-            "randomizer overwrite it.")
+        if messagebox.askyesno(
+                "Colours changed by another tool",
+                "These characters' colours were changed outside this app (e.g.\n"
+                "with PalMod), so they were left alone:\n\n"
+                f"  {', '.join(sorted(fresh))}\n\n"
+                "Import them now? They're saved as your own palettes and locked\n"
+                "where they are - your game looks the same, and you can still\n"
+                "swap, mix and share them like gallery palettes.\n\n"
+                "(No = keep leaving them alone. The Home tab can import them later.)"):
+            self.on_import("live")
 
 
 # --------------------------------------------------------------- entry point
@@ -6228,9 +6521,37 @@ def main():
         style.configure("TNotebook.Tab", padding=(14, 5))
     except tk.TclError:
         pass
+    _always_visible_scrollbars()
     App(root)
     root.mainloop()
     return 0
+
+
+def _always_visible_scrollbars():
+    """Windows 11's themed scrollbars are a thin line that only shows its
+    arrows on hover. Rebuild the default vertical scrollbar (every list,
+    gallery, tab body and dropdown) from the plain ttk elements: up/down
+    arrow buttons and a solid thumb that are always drawn."""
+    s = ttk.Style()
+    try:
+        for part, src in (("trough", "Vertical.Scrollbar.trough"),
+                          ("uparrow", "Vertical.Scrollbar.uparrow"),
+                          ("downarrow", "Vertical.Scrollbar.downarrow"),
+                          ("thumb", "Vertical.Scrollbar.thumb")):
+            s.element_create(f"Vis.{part}", "from", "default", src)
+        s.layout("Vertical.TScrollbar", [
+            ("Vis.trough", {"sticky": "ns", "children": [
+                ("Vis.uparrow", {"side": "top", "sticky": ""}),
+                ("Vis.downarrow", {"side": "bottom", "sticky": ""}),
+                ("Vis.thumb", {"sticky": "nswe"})]})])
+        s.configure("Vertical.TScrollbar", background="#c9c9c9", troughcolor="#ececec",
+                    arrowcolor="#404040", bordercolor="#bdbdbd", arrowsize=17,
+                    relief="flat", borderwidth=1)
+        s.map("Vertical.TScrollbar",
+              background=[("pressed", "#9a9a9a"), ("active", "#b3b3b3")],
+              arrowcolor=[("disabled", "#a0a0a0")])
+    except tk.TclError:
+        pass                      # keep the theme's own scrollbar
 
 
 if __name__ == "__main__":

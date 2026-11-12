@@ -9,7 +9,7 @@ import os, sys, subprocess
 
 # Single source of truth for the app version (shown in the GUI, used for
 # release tags). Bump this when cutting a new version.
-VERSION = "1.0.12"
+VERSION = "1.0.13"
 
 
 def app_dir():
@@ -119,11 +119,23 @@ def migrate_state():
 
 
 def ensure_custom_dirs():
-    for sub in ("skins", "stages"):
+    """custom/skins/<Character>/ for every character (drop palette sheets in),
+    custom/stages/ and custom/fx/ - so nobody has to guess folder names."""
+    for sub in ("skins", "stages", "fx"):
         try:
             os.makedirs(os.path.join(CUSTOM, sub), exist_ok=True)
         except OSError:
             pass
+    try:
+        for p in (resource_dir(), app_dir()):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        from mvc2_data.characters import CHARACTERS, PLAYABLE_CHARS, safe_name
+        for cid in PLAYABLE_CHARS:
+            os.makedirs(os.path.join(CUSTOM, "skins", safe_name(CHARACTERS[cid])),
+                        exist_ok=True)
+    except Exception:
+        pass
 
 # MvC2 Fighting Collection (Steam) App ID — same one MixConverter uses.
 APPID = "2634890"

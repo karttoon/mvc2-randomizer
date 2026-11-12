@@ -37,3 +37,34 @@ def instructions():
         "  4. Close Properties and launch the game from Steam as normal.\n"
         "     Palettes randomize automatically each time you play.\n"
     )
+
+
+def launch_option_set():
+    """True if Steam's launch options for the collection point at this app,
+    False if they don't, None if it can't tell (Steam config not found).
+    Read-only: looks at userdata/*/config/localconfig.vdf."""
+    import glob
+    import re
+    roots = []
+    gr = config.game_root()
+    if gr:   # <steam library>/steamapps/common/<game>
+        roots.append(os.path.dirname(os.path.dirname(os.path.dirname(gr))))
+    pf = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    roots.append(os.path.join(pf, "Steam"))
+    seen = False
+    exe = os.path.basename(exe_path()).lower()
+    for root in roots:
+        for vdf in glob.glob(os.path.join(root, "userdata", "*", "config",
+                                          "localconfig.vdf")):
+            try:
+                with open(vdf, encoding="utf-8", errors="replace") as f:
+                    txt = f.read()
+            except OSError:
+                continue
+            seen = True
+            for m in re.finditer(r'"%s"\s*\{' % config.APPID, txt):
+                chunk = txt[m.end():m.end() + 4000]
+                lo = re.search(r'"LaunchOptions"\s+"((?:[^"\\]|\\.)*)"', chunk)
+                if lo and exe in lo.group(1).lower() and "%command%" in lo.group(1):
+                    return True
+    return False if seen else None

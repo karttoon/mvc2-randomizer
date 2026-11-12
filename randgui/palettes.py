@@ -376,6 +376,10 @@ def unreviewed_by_char(verdicts=None):
 def counts():
     """(total_palettes, rejected_count) across the whole collection."""
     total = config.skins_count()
+    cdir = os.path.join(config.CUSTOM, "skins")
+    if os.path.isdir(cdir):                    # the user's own sheets count too
+        for _r, _d, files in os.walk(cdir):
+            total += sum(1 for f in files if f.lower().endswith(".png"))
     v = load_verdicts()
     rejected = sum(1 for x in v.values() if x == REJECT)
     return total, rejected

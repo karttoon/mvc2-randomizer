@@ -29,6 +29,8 @@ HIDDEN = [
     "mvc2_data.arcade_ai", "mvc2_data.ai_pack_apply", "mvc2_data.arcade_companion",
     # game check / backup / restore, and the activity log
     "mvc2_data.gamecheck", "activity",
+    # onboarding: Home checklist, import from a game file, update checks
+    "onboard", "importer", "updates",
 ]
 
 # The Arcade CPU-AI pack: manifest, the pack's AI files, the stock ones
@@ -52,6 +54,8 @@ a = Analysis(
            # pre-1.0.7 "vanilla" blocks, so they aren't mistaken for outside edits
            (os.path.join(ROOT, "mvc2_data", "legacy_vanilla_hashes.json"), "mvc2_data"),
            (os.path.join(ROOT, "mvc2_data", "sheet_specs.json"), "mvc2_data"),
+           # one sheet layout per character, for importing palettes from a game file
+           (os.path.join(ROOT, "mvc2_data", "sheet_templates.zip"), "mvc2_data"),
            # Hand-curated primary/secondary color indices for gallery sorting
            (os.path.join(ROOT, "randgui", "core_colors.json"), "."),
            # FX effect-palette catalogue (verdicts + base_idx) and the effect /

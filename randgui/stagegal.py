@@ -20,7 +20,8 @@ SLOTS = ["00", "01", "02", "03", "04", "05", "06", "07", "08",
 TRAINING = "0B"
 
 KIND_LABEL = {"default": "Default", "edit": "Edit", "retexture": "Retexture",
-              "port": "Port", "original": "Custom"}
+              "port": "Port", "original": "Custom",
+              "custom": "Your own", "imported": "Imported"}
 
 # Mesh marker present only in cross-slot "pipeline" ports (repacked to merge into
 # any animated slot). Slim training-only customs lack it.
@@ -183,14 +184,18 @@ def sections():
     # reason and never rolled when invalid); unrecognized names show up via
     # pending_customs() so the user can assign them to a stage in the app.
     recognized, _pending = custom_stage_scan()
+    imported = imported_stages()
     for (slot, name), files in sorted(recognized.items()):
         invalid = None
         if "tex" not in files:
             invalid = "missing the tex file"
         elif slot == "XX" and not files.get("pol"):
             invalid = "a full custom stage needs both pol and tex"
-        elif slot != "XX" and not (files.get("pol")
-                                   and _has_mesh_marker(files["pol"])):
+        elif (slot != "XX" and files.get("pol") and _pol_models(files["pol"]) == 1
+              and not _has_mesh_marker(files["pol"])):
+            invalid = ("a slim single-model POL only works in Training - "
+                       "assign it there as a full custom stage")
+        elif slot != "XX" and not files.get("pol"):
             # a pipeline port pinned to this slot is repacked+merged into it, so
             # it needn't match the slot's stock TEX size; anything else must.
             d_tex = os.path.join(config.STAGES, "bins", f"d_{slot}_tex.BIN")
@@ -204,6 +209,13 @@ def sections():
              "tex_path": files.get("tex"), "pol_path": files.get("pol"),
              "views": ({"C": thumb} if thumb else {}),
              "has_bin": invalid is None, "invalid": invalid}
+        imp = imported.get(f"{slot}_{name}")
+        if imp is not None:
+            # Taken from a game file: may be a merge made for that one slot,
+            # so it stays in the slot it came from (never cross-slot).
+            v["kind"] = "imported"
+            v["imported"] = True
+            v["from_slot"] = imp.get("slot") or (TRAINING if slot == "XX" else slot)
         if slot == "XX":
             training_extra.append(v)
         elif slot in by_slot:
@@ -236,6 +248,27 @@ def sections():
     return slot_secs + port_secs
 
 
+def imported_stages():
+    """{base: {"slot", "pol", "tex", "source"}} from custom/stages/imported.json."""
+    try:
+        with open(os.path.join(config.CUSTOM, "stages", "imported.json"),
+                  encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _pol_models(pol_path):
+    """Model count from a POL header (u32 at offset 4), or None."""
+    try:
+        with open(pol_path, "rb") as f:
+            head = f.read(8)
+        return int.from_bytes(head[4:8], "little")
+    except OSError:
+        return None
+
+
 def _has_mesh_marker(pol_path):
     """True if a POL is a cross-slot pipeline port (mergeable into any slot)."""
     try:
@@ -256,7 +289,8 @@ def slot_lock_options(distribute_ports=False, slot_fits=None):
     slot_secs, port_secs = secs[:len(SLOTS)], secs[len(SLOTS):]
     ports = [v for _t, vs in port_secs for v in vs]
     pipeline = [p for p in ports
-                if p.get("pol_path") and _has_mesh_marker(p["pol_path"])]
+                if p.get("pol_path") and _has_mesh_marker(p["pol_path"])
+                and not p.get("imported")]
     out = []
     for sid, (title, vs) in zip(SLOTS, slot_secs):
         short = title.split("  -  ", 1)[-1]
@@ -516,4 +550,60 @@ def thumb_image(variant, width=200):
             return im.resize((width, h), Image.LANCZOS)
         except Exception:
             pass
-    return Image.new("RGB", (width, int(width * 9 / 16)), (60, 60, 66))
+    if variant.get("author") == "you":
+        return custom_tile(variant, width)
+    return Image.new("RGB", (width, int(width * 3 / 4)), (60, 60, 66))
+
+
+def _font(size, bold=False):
+    from PIL import ImageFont
+    for name in (("segoeuib.ttf", "arialbd.ttf") if bold else ("segoeui.ttf", "arial.ttf")):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def custom_tile(variant, width=200, height=None):
+    """A drawn card for a stage with no preview (your own / imported files):
+    same 4:3 shape as the gallery thumbnails, a stage icon, what it is, its
+    name and the slot it belongs to."""
+    from PIL import ImageDraw
+    height = height or int(width * 3 / 4)
+    imported = variant.get("imported") or variant.get("kind") == "imported"
+    bg, accent = ((44, 52, 74), (120, 160, 230)) if imported else ((58, 48, 74), (190, 140, 235))
+    im = Image.new("RGB", (width, height), bg)
+    d = ImageDraw.Draw(im)
+    u = max(1, min(width, height * 4 // 3) / 200)       # scale unit
+    # icon: a framed landscape (sky line, hills) - "a stage"
+    iw, ih = int(64 * u), int(40 * u)
+    x0, y0 = (width - iw) // 2, int(height * 0.14)
+    lw = max(2, int(2.5 * u))
+    d.rectangle((x0, y0, x0 + iw, y0 + ih), outline=accent, width=lw)
+    d.polygon([(x0 + lw, y0 + ih - lw), (x0 + iw * 0.35, y0 + ih * 0.45),
+               (x0 + iw * 0.55, y0 + ih * 0.7), (x0 + iw * 0.75, y0 + ih * 0.35),
+               (x0 + iw - lw, y0 + ih - lw)], fill=accent)
+    r = int(5 * u)
+    d.ellipse((x0 + iw * 0.2 - r, y0 + ih * 0.3 - r, x0 + iw * 0.2 + r, y0 + ih * 0.3 + r),
+              fill=accent)
+
+    def centered(text, y, font, fill):
+        while d.textlength(text, font=font) > width - 12 * u and len(text) > 4:
+            text = text[:-2].rstrip() + "…" if not text.endswith("…") else text[:-3] + "…"
+        tw = d.textlength(text, font=font)
+        d.text(((width - tw) / 2, y), text, font=font, fill=fill)
+
+    label = "IMPORTED STAGE" if imported else "YOUR OWN STAGE"
+    centered(label, y0 + ih + 8 * u, _font(max(9, int(15 * u)), True), accent)
+    centered(variant.get("name", ""), y0 + ih + 30 * u, _font(max(8, int(13 * u))),
+             (235, 235, 240))
+    key = variant.get("key", "")
+    slot = variant.get("from_slot") or (key.split("_")[1] if key.startswith("u_") else "")
+    where = ("Training" if slot in ("XX", TRAINING) else f"STG {slot}") if slot else ""
+    if imported:
+        where += " only - from your game file"
+    elif slot == "XX":
+        where = "Training (any slot it fits with cross-slot on)"
+    centered(where, y0 + ih + 50 * u, _font(max(8, int(11 * u))), (170, 175, 190))
+    return im
